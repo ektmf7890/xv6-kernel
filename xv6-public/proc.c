@@ -7,9 +7,9 @@
 #include "proc.h"
 #include "spinlock.h"
 
-struct{
+struct { 
   struct spinlock lock;
-  int qlevels[3] = {0, 0, 0};
+  int qlevels[3];
 } mlfq; 
 
 struct {
@@ -352,10 +352,10 @@ scheduler(void)
    
     acquire(&mlfq.lock);
     int level;
-    if (mlfqcount[2] > 0){
+    if (mlfq.qlevels[2] > 0){
       level = 2;
     }
-    else if (mlfqcount[1] > 0){
+    else if (mlfq.qlevels[1] > 0){
       level = 1;
     }
     else{
@@ -412,32 +412,17 @@ sched(void)
   mycpu()->intena = intena;
 }
 
-// Give up the CPU for one scheduling round.
 void
-yield(void)
-{
-  acquire(&ptable.lock);  //DOC: yieldlock
-  
-  uint tickcount = myproc()->tickcount++;
-  uint level = getlev();
-  
-  // Check if this process has used up its time allotment
-  if(level != 0 && (tickcount >= myproc()->timeallot)){
-    // used up its time allot
-    lowerlevel(myproc());
+priboost(){
+  struct proc* p;
+  acquire(&ptable.lock);
+  for(p=ptable.proc; p < &ptable.proc[NPROC]; p++){
+    mlfq.qlevels[p->level]--;
+    p->level = 2;
+    p->timequant = 1;
+    p->timeallot = 5;
+    mlfq.qlevels[2]++;
   }
-  
-  // Priority Boost
-  if(ticks % 100 == 0){
-    priboost();
-  }
-  
-  // Do not call scheduler if it hasn't used up its time quantum
-  if(level == 2 || (tickcount % myproc()->timequant() == 0)){
-    myproc()->state = RUNNABLE;
-    sched();
-  }
-
   release(&ptable.lock);
 }
 
@@ -464,6 +449,36 @@ void lowerlevel(struct proc* p){
   release(&mlfq.lock);
   
   p->tickcount = 0;
+}
+
+// Give up the CPU for one scheduling round.
+void
+yield(void)
+{
+  acquire(&ptable.lock);  //DOC: yieldlock
+  
+  uint tickcount = myproc()->tickcount++;
+  //uint level = getlev();
+  uint level = myproc()->level;
+
+  // Check if this process has used up its time allotment
+  if(level != 0 && (tickcount >= myproc()->timeallot)){
+    // used up its time allot
+    lowerlevel(myproc());
+  }
+  
+  // Priority Boost
+  if(ticks % 100 == 0){
+    priboost();
+  }
+  
+  // Do not call scheduler if it hasn't used up its time quantum
+  if(level == 2 || (tickcount % myproc()->timequant == 0)){
+    myproc()->state = RUNNABLE;
+    sched();
+  }
+
+  release(&ptable.lock);
 }
 
 // A fork child's very first scheduling by scheduler()
@@ -608,16 +623,3 @@ procdump(void)
   }
 }
 
-void
-priboost(void){
-  struct proc* p;
-  acquire(&ptable.lock);
-  for(p=ptable.proc; p < &ptable.proc[NPROC]; p++){
-    mlfqcount[p->level]--;
-    p->level = 2;
-    p->timequant = 1;
-    p->timeallot = 5;
-    mlfqcount[2]++;
-  }
-  release(&ptable.lock);
-}

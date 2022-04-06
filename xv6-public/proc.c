@@ -7,6 +7,8 @@
 #include "proc.h"
 #include "spinlock.h"
 
+int mlfqcount[3] = {0, 0, 0};
+
 struct {
   struct spinlock lock;
   struct proc proc[NPROC];
@@ -17,6 +19,7 @@ static struct proc *initproc;
 int nextpid = 1;
 extern void forkret(void);
 extern void trapret(void);
+
 
 static void wakeup1(void *chan);
 
@@ -112,7 +115,32 @@ found:
   memset(p->context, 0, sizeof *p->context);
   p->context->eip = (uint)forkret;
 
+  p->level = 2;
+  p->timequant = 1;
+  p->timeallot = 5;
+  mlfqcount[2]++;
+
   return p;
+}
+
+void lowerlevel(struct proc* p){
+  if (p->level < 1 || p->level > 2){
+    return;
+  }
+
+  mlfqcount[p->level]--;
+  p->level--;
+  switch(p->level){
+    case 1:
+      p->timequant = 2;
+      p->timeallot = 10;
+      break;
+    case 0:
+      p->timequant = 4;
+      break;
+  }
+  mlfqcount[p->level]++;
+  p->tickcount = 0;
 }
 
 //PAGEBREAK: 32
@@ -179,6 +207,7 @@ growproc(int n)
 // Caller must set state of returned proc to RUNNABLE.
 int
 fork(void)
+
 {
   int i, pid;
   struct proc *np;
@@ -330,10 +359,23 @@ scheduler(void)
     // Enable interrupts on this processor.
     sti();
 
+    // Running processes in ptable in Round-Robin fashion.
     // Loop over process table looking for process to run.
     acquire(&ptable.lock);
+    
+    int level;
+    if (mlfqcount[2] > 0){
+      level = 2;
+    }
+    else if (mlfqcount[1] > 0){
+      level = 1;
+    }
+    else{
+      level = 0;
+    }
+
     for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
-      if(p->state != RUNNABLE)
+      if(!(p->state == RUNNABLE &&  p->level == level))
         continue;
 
       // Switch to chosen process.  It is the process's job
@@ -355,7 +397,7 @@ scheduler(void)
   }
 }
 
-// Enter scheduler.  Must hold only ptable.lock
+// Enter scheduler.  Must hold only pable.lock
 // and have changed proc->state. Saves and restores
 // intena because intena is a property of this
 // kernel thread, not this CPU. It should
@@ -386,8 +428,27 @@ void
 yield(void)
 {
   acquire(&ptable.lock);  //DOC: yieldlock
-  myproc()->state = RUNNABLE;
-  sched();
+  
+  uint tickcount = myproc()->tickcount++;
+  uint level = getlev();
+  
+  // Check if this process has used up its time allotment
+  if(level != 0 && (tickcount >= myproc()->timeallot)){
+    // used up its time allot
+    lowerlevel(myproc());
+  }
+  
+  // Priority Boost
+  if(ticks % 100 == 0){
+    priboost();
+  }
+  
+  // Do not call scheduler if it hasn't used up its time quantum
+  if(level == 2 || (tickcount % myproc()->timequant() == 0)){
+    myproc()->state = RUNNABLE;
+    sched();
+  }
+
   release(&ptable.lock);
 }
 
@@ -531,4 +592,14 @@ procdump(void)
     }
     cprintf("\n");
   }
+}
+
+void
+priboost(void){
+  struct proc* p;
+  acquire(&ptable.lock);
+  for(p=ptable.proc; p < &ptable.proc[NPROC]; p++){
+    p->level = 2;
+  }
+  release(&ptable.lock);
 }

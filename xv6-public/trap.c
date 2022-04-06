@@ -1,4 +1,8 @@
-#include "types.h"
+
+ // Priority Boost
+if(ticks % 100 == 0){
+priboost();
+}#include "types.h"
 #include "defs.h"
 #include "param.h"
 #include "memlayout.h"
@@ -47,11 +51,12 @@ trap(struct trapframe *tf)
   }
 
   switch(tf->trapno){
+  // timer interrupt
   case T_IRQ0 + IRQ_TIMER:
     if(cpuid() == 0){
       acquire(&tickslock);
       ticks++;
-      wakeup(&ticks);
+      wakeup(&ticks); // set all process's state to RUNNABLE
       release(&tickslock);
     }
     lapiceoi();

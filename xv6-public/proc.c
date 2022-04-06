@@ -7,7 +7,10 @@
 #include "proc.h"
 #include "spinlock.h"
 
-int mlfqcount[3] = {0, 0, 0};
+struct{
+  struct spinlock lock;
+  int qlevels[3] = {0, 0, 0};
+} mlfq; 
 
 struct {
   struct spinlock lock;
@@ -118,30 +121,14 @@ found:
   p->level = 2;
   p->timequant = 1;
   p->timeallot = 5;
-  mlfqcount[2]++;
+  
+  acquire(&mlfq.lock);
+  mlfq.qlevels[2]++;
+  release(&mlfq.lock);
 
   return p;
 }
 
-void lowerlevel(struct proc* p){
-  if (p->level < 1 || p->level > 2){
-    return;
-  }
-
-  mlfqcount[p->level]--;
-  p->level--;
-  switch(p->level){
-    case 1:
-      p->timequant = 2;
-      p->timeallot = 10;
-      break;
-    case 0:
-      p->timequant = 4;
-      break;
-  }
-  mlfqcount[p->level]++;
-  p->tickcount = 0;
-}
 
 //PAGEBREAK: 32
 // Set up first user process.
@@ -362,7 +349,8 @@ scheduler(void)
     // Running processes in ptable in Round-Robin fashion.
     // Loop over process table looking for process to run.
     acquire(&ptable.lock);
-    
+   
+    acquire(&mlfq.lock);
     int level;
     if (mlfqcount[2] > 0){
       level = 2;
@@ -373,6 +361,7 @@ scheduler(void)
     else{
       level = 0;
     }
+    release(&mlfq.lock);
 
     for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
       if(!(p->state == RUNNABLE &&  p->level == level))
@@ -450,6 +439,31 @@ yield(void)
   }
 
   release(&ptable.lock);
+}
+
+void lowerlevel(struct proc* p){
+  if (p->level < 1 || p->level > 2){
+    return;
+  }
+
+  acquire(&mlfq.lock);
+  mlfq.qlevels[p->level]--;
+  
+  p->level--;
+  switch(p->level){
+    case 1:
+      p->timequant = 2;
+      p->timeallot = 10;
+      break;
+    case 0:
+      p->timequant = 4;
+      break;
+  }
+  
+  mlfq.qlevels[p->level]++;
+  release(&mlfq.lock);
+  
+  p->tickcount = 0;
 }
 
 // A fork child's very first scheduling by scheduler()
@@ -599,7 +613,11 @@ priboost(void){
   struct proc* p;
   acquire(&ptable.lock);
   for(p=ptable.proc; p < &ptable.proc[NPROC]; p++){
+    mlfqcount[p->level]--;
     p->level = 2;
+    p->timequant = 1;
+    p->timeallot = 5;
+    mlfqcount[2]++;
   }
   release(&ptable.lock);
 }

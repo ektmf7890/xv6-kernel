@@ -7,10 +7,12 @@
 #include "proc.h"
 #include "spinlock.h"
 
-struct { 
-  struct spinlock lock;
+uint priboosttime = 0;
+
+struct {
   int qlevels[3];
-} mlfq; 
+  struct spinlock lock;
+}mlfq;
 
 struct {
   struct spinlock lock;
@@ -23,13 +25,35 @@ int nextpid = 1;
 extern void forkret(void);
 extern void trapret(void);
 
-
 static void wakeup1(void *chan);
+
+// remove a process from mlfq when its state changes from RUNNABLE/RUNNING to different state
+void 
+mlfqrm(struct proc* p){
+  acquire(&mlfq.lock);
+  if(p->level >= 0 && p->level <= 2)
+    mlfq.qlevels[p->level]--;
+  release(&mlfq.lock);
+}
+
+// add a process to mlfq
+void mlfqadd(struct proc* p)
+{
+  acquire(&mlfq.lock);
+  if(p->level >= 0 && p->level <= 2)
+    mlfq.qlevels[p->level]++;
+  release(&mlfq.lock);
+  //cprintf("\nRunnable process(pid %d): level %d, qlevels{%d, %d, %d}\n", p->pid, p->level, mlfq.qlevels[0], mlfq.qlevels[1], mlfq.qlevels[2]);
+}
 
 void
 pinit(void)
 {
   initlock(&ptable.lock, "ptable");
+  initlock(&mlfq.lock, "mlfq");
+  acquire(&mlfq.lock);
+  mlfq.qlevels[0] = mlfq.qlevels[1] = mlfq.qlevels[2] = 0;
+  release(&mlfq.lock);
 }
 
 // Must be called with interrupts disabled
@@ -118,14 +142,11 @@ found:
   memset(p->context, 0, sizeof *p->context);
   p->context->eip = (uint)forkret;
 
+  // Assign to level 2
   p->level = 2;
   p->timequant = 1;
   p->timeallot = 5;
-  
-  acquire(&mlfq.lock);
-  mlfq.qlevels[2]++;
-  release(&mlfq.lock);
-
+  cprintf("\nEmbryo process made(pid: %d)\n", p->pid); 
   return p;
 }
 
@@ -164,6 +185,7 @@ userinit(void)
   acquire(&ptable.lock);
 
   p->state = RUNNABLE;
+  mlfqadd(p);
 
   release(&ptable.lock);
 }
@@ -210,6 +232,7 @@ fork(void)
     kfree(np->kstack);
     np->kstack = 0;
     np->state = UNUSED;
+    mlfqrm(np);
     return -1;
   }
   np->sz = curproc->sz;
@@ -231,6 +254,7 @@ fork(void)
   acquire(&ptable.lock);
 
   np->state = RUNNABLE;
+  mlfqadd(np);
 
   release(&ptable.lock);
 
@@ -279,6 +303,7 @@ exit(void)
 
   // Jump into the scheduler, never to return.
   curproc->state = ZOMBIE;
+  mlfqrm(curproc);
   sched();
   panic("zombie exit");
 }
@@ -348,22 +373,16 @@ scheduler(void)
 
     // Running processes in ptable in Round-Robin fashion.
     // Loop over process table looking for process to run.
-    acquire(&ptable.lock);
-   
-    acquire(&mlfq.lock);
-    int level;
-    if (mlfq.qlevels[2] > 0){
-      level = 2;
-    }
-    else if (mlfq.qlevels[1] > 0){
-      level = 1;
-    }
-    else{
-      level = 0;
-    }
-    release(&mlfq.lock);
+    acquire(&ptable.lock); 
 
     for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+      acquire(&mlfq.lock);
+      int level;
+      if (mlfq.qlevels[2] > 0) level = 2;
+      else if (mlfq.qlevels[1] > 0) level = 1;
+      else level = 0;
+      release(&mlfq.lock);
+      
       if(!(p->state == RUNNABLE &&  p->level == level))
         continue;
 
@@ -415,15 +434,18 @@ sched(void)
 void
 priboost(){
   struct proc* p;
-  acquire(&ptable.lock);
+  // we shouldn't acquire ptable's lock because its done in callee(yield)
+  acquire(&mlfq.lock); 
   for(p=ptable.proc; p < &ptable.proc[NPROC]; p++){
-    mlfq.qlevels[p->level]--;
-    p->level = 2;
-    p->timequant = 1;
-    p->timeallot = 5;
-    mlfq.qlevels[2]++;
+    if(p->state==RUNNABLE){
+      mlfq.qlevels[p->level]--;
+      p->level = 2;
+      p->timequant = 1;
+      p->timeallot = 5;
+      mlfq.qlevels[2]++;
+    }
   }
-  release(&ptable.lock);
+  release(&mlfq.lock);
 }
 
 void lowerlevel(struct proc* p){
@@ -458,22 +480,29 @@ yield(void)
   acquire(&ptable.lock);  //DOC: yieldlock
   
   uint tickcount = myproc()->tickcount++;
-  //uint level = getlev();
   uint level = myproc()->level;
 
   // Check if this process has used up its time allotment
+  int lowered = 0;
   if(level != 0 && (tickcount >= myproc()->timeallot)){
     // used up its time allot
+    //cprintf("\nqlevels before lowerlevel(): {%d, %d, %d}\n", mlfq.qlevels[0], mlfq.qlevels[1], mlfq.qlevels[2]);
     lowerlevel(myproc());
+    lowered = 1;
+    cprintf("\nUsed Time Allot(pid: %d, level:%d)\ncurrent qlevels: {%d, %d, %d}\n", myproc()->pid, myproc()->level, mlfq.qlevels[0], mlfq.qlevels[1], mlfq.qlevels[2]);
   }
   
   // Priority Boost
-  if(ticks % 100 == 0){
+  acquire(&tickslock);
+  if(ticks - priboosttime >= 100){
+    priboosttime = ticks;
     priboost();
+    cprintf("\nPriboost\n");
   }
+  release(&tickslock);
   
   // Do not call scheduler if it hasn't used up its time quantum
-  if(level == 2 || (tickcount % myproc()->timequant == 0)){
+  if(lowered || tickcount % myproc()->timequant == 0){
     myproc()->state = RUNNABLE;
     sched();
   }
@@ -528,6 +557,7 @@ sleep(void *chan, struct spinlock *lk)
   // Go to sleep.
   p->chan = chan;
   p->state = SLEEPING;
+  mlfqrm(p);
 
   sched();
 
@@ -550,8 +580,10 @@ wakeup1(void *chan)
   struct proc *p;
 
   for(p = ptable.proc; p < &ptable.proc[NPROC]; p++)
-    if(p->state == SLEEPING && p->chan == chan)
+    if(p->state == SLEEPING && p->chan == chan){
       p->state = RUNNABLE;
+      mlfqadd(p);
+    }
 }
 
 // Wake up all processes sleeping on chan.
@@ -576,8 +608,10 @@ kill(int pid)
     if(p->pid == pid){
       p->killed = 1;
       // Wake process from sleep if necessary.
-      if(p->state == SLEEPING)
+      if(p->state == SLEEPING){
         p->state = RUNNABLE;
+        mlfqadd(p);
+      }
       release(&ptable.lock);
       return 0;
     }
@@ -613,7 +647,7 @@ procdump(void)
       state = states[p->state];
     else
       state = "???";
-    cprintf("%d %s %s", p->pid, state, p->name);
+    cprintf("%d %s %s level%d", p->pid, state, p->name, p->level);
     if(p->state == SLEEPING){
       getcallerpcs((uint*)p->context->ebp+2, pc);
       for(i=0; i<10 && pc[i] != 0; i++)
@@ -623,3 +657,11 @@ procdump(void)
   }
 }
 
+int 
+getlev(void){
+  int level = myproc()->level;
+  if (level < 0 || level > 2)
+    return -1;
+  else
+    return level;
+}

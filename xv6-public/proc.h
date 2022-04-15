@@ -37,12 +37,13 @@ enum procstate { UNUSED, EMBRYO, SLEEPING, RUNNABLE, RUNNING, ZOMBIE };
 // Per-process state
 struct proc {
   uint level;                  // MLFQ priority level
-  uint timeallot;               // time allotment 
-  uint timequant;               // time quantum
+  uint timeallot;              // time allotment 
+  uint timequant;              // time quantum
   uint tickcount;              // #of ticks this process has used
-  uint cpu_share;               // designated CPU share for stride scheduling
-  uint stride;                  // stride = (int)(100 / cpu_share)
-  uint pass;                    // pass += stride * (# of ticks used in current round)
+  //int cpu_share;             // designated CPU share for stride scheduling
+  int stride;                  // stride = (int)(1000 / cpu_share)
+  int pass;                    // pass += stride * (# of ticks used in current round)
+  struct proc* next;           // points to the next process when placed in mlfq or stride queue. 
   uint sz;                     // Size of process memory (bytes)
   pde_t* pgdir;                // Page table
   char *kstack;                // Bottom of kernel stack for this process

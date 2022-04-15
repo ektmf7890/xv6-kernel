@@ -7,12 +7,19 @@
 #include "proc.h"
 #include "spinlock.h"
 
-uint priboosttime = 0;
+void procdump(void);
 
-struct {
-  int qlevels[3];
+// protected data for scheduling tasks
+struct{
+  uint priboosttime;         // Counts num of ticks passed since last pri boost. Checked at process yield.
+  int mlfq_pass;             // Pass value of mlfq processes
+  int mlfq_stride;           // Stride value of mlfq processes -> changes whenever set_cpu_share called
+  int stride_share;          // Sum of CPU share non-lmfq processes are occupying.
+  struct proc* stride_head;  // Linked list of processes in stride queue.
+  int qlevels[3];            // Number of processes in each mlfq level.
+//  struct proc* mlfq_head;    // Linked list of processes in mlfq.
   struct spinlock lock;
-}mlfq;
+}mlfqstr;
 
 struct {
   struct spinlock lock;
@@ -28,32 +35,67 @@ extern void trapret(void);
 static void wakeup1(void *chan);
 
 // remove a process from mlfq when its state changes from RUNNABLE/RUNNING to different state
+// ptable lock should be acquired in caller
 void 
 mlfqrm(struct proc* p){
-  acquire(&mlfq.lock);
+  acquire(&mlfqstr.lock);
   if(p->level >= 0 && p->level <= 2)
-    mlfq.qlevels[p->level]--;
-  release(&mlfq.lock);
+    mlfqstr.qlevels[p->level]--;
+
+  // remove from the linked list, mlfq_procs
+  /*if(mlfqstr.mlfq_head->pid == p->pid) // head itself is the process to remove
+    mlfqstr.mlfq_head = mlfqstr.mlfq_head->next;
+  else{
+    struct proc* pptr = mlfqstr.mlfq_head;
+    while(pptr){
+      if(pptr->next->pid == p->pid){
+        pptr->next = p->next;
+        break;
+      }
+      pptr = pptr->next;
+    }
+  }
+  p->next = NULL;
+  */
+  //cprintf("level2: %d, level1: %d, level0: %d\n", mlfqstr.qlevels[2], mlfqstr.qlevels[1], mlfqstr.qlevels[0]);
+  release(&mlfqstr.lock);
 }
 
-// add a process to mlfq
-void mlfqadd(struct proc* p)
+// add a process to mlfq when its status is changed to RUNNABLE
+// ptable lock should be acquired in caller
+void 
+mlfqadd(struct proc* p)
 {
-  acquire(&mlfq.lock);
+  acquire(&mlfqstr.lock);
   if(p->level >= 0 && p->level <= 2)
-    mlfq.qlevels[p->level]++;
-  release(&mlfq.lock);
-  //cprintf("\nRunnable process(pid %d): level %d, qlevels{%d, %d, %d}\n", p->pid, p->level, mlfq.qlevels[0], mlfq.qlevels[1], mlfq.qlevels[2]);
+    mlfqstr.qlevels[p->level]++;
+  
+  // add process to front of linked list, mlfq_procs
+  /*
+  p->next = mlfqstr.mlfq_head;
+  mlfqstr.mlfq_head = p;
+  */
+  //cprintf("level2: %d, level1: %d, level0: %d\n", mlfqstr.qlevels[2], mlfqstr.qlevels[1], mlfqstr.qlevels[0]);
+  release(&mlfqstr.lock);
 }
+  
 
 void
 pinit(void)
 {
   initlock(&ptable.lock, "ptable");
-  initlock(&mlfq.lock, "mlfq");
-  acquire(&mlfq.lock);
-  mlfq.qlevels[0] = mlfq.qlevels[1] = mlfq.qlevels[2] = 0;
-  release(&mlfq.lock);
+  initlock(&mlfqstr.lock, "mlfqstr");
+  
+  // initialize values in mlfqstr
+  acquire(&mlfqstr.lock);
+  mlfqstr.priboosttime = 0;
+  mlfqstr.qlevels[0] = mlfqstr.qlevels[1] = mlfqstr.qlevels[2] = 0;
+  //mlfqstr.mlfq_head = NULL;
+  mlfqstr.stride_head = NULL;
+  mlfqstr.stride_share = 0;
+  mlfqstr.mlfq_pass = 0;
+  mlfqstr.mlfq_stride = 0;
+  release(&mlfqstr.lock);
 }
 
 // Must be called with interrupts disabled
@@ -88,10 +130,10 @@ struct proc*
 myproc(void) {
   struct cpu *c;
   struct proc *p;
-  pushcli();
+  pushcli(); // disable interrupt
   c = mycpu();
   p = c->proc;
-  popcli();
+  popcli(); // enable interrupt
   return p;
 }
 
@@ -106,12 +148,14 @@ allocproc(void)
   struct proc *p;
   char *sp;
 
+   //cprintf("allocproc\n");
   acquire(&ptable.lock);
 
   for(p = ptable.proc; p < &ptable.proc[NPROC]; p++)
     if(p->state == UNUSED)
       goto found;
 
+  //cprintf("allocproc");
   release(&ptable.lock);
   return 0;
 
@@ -119,6 +163,14 @@ found:
   p->state = EMBRYO;
   p->pid = nextpid++;
 
+  // Assign to level 2
+  p->level = 2;
+  p->timequant = 1;
+  p->timeallot = 5;
+  p->next = NULL; 
+ // cprintf("\nEmbryo process made(pid: %d)\n", p->pid);
+
+  //cprintf("allorproc2");
   release(&ptable.lock);
 
   // Allocate kernel stack.
@@ -142,11 +194,6 @@ found:
   memset(p->context, 0, sizeof *p->context);
   p->context->eip = (uint)forkret;
 
-  // Assign to level 2
-  p->level = 2;
-  p->timequant = 1;
-  p->timeallot = 5;
-  cprintf("\nEmbryo process made(pid: %d)\n", p->pid); 
   return p;
 }
 
@@ -182,11 +229,13 @@ userinit(void)
   // run this process. the acquire forces the above
   // writes to be visible, and the lock is also needed
   // because the assignment might not be atomic.
+   //cprintf("userinit\n");
   acquire(&ptable.lock);
 
   p->state = RUNNABLE;
   mlfqadd(p);
 
+  //cprintf("userinit");
   release(&ptable.lock);
 }
 
@@ -232,7 +281,6 @@ fork(void)
     kfree(np->kstack);
     np->kstack = 0;
     np->state = UNUSED;
-    mlfqrm(np);
     return -1;
   }
   np->sz = curproc->sz;
@@ -251,11 +299,14 @@ fork(void)
 
   pid = np->pid;
 
+   //cprintf("fork`\n");
   acquire(&ptable.lock);
 
   np->state = RUNNABLE;
-  mlfqadd(np);
+  if(np->level != -1)
+    mlfqadd(np);
 
+ // cprintf("fork\n");
   release(&ptable.lock);
 
   return pid;
@@ -287,6 +338,7 @@ exit(void)
   end_op();
   curproc->cwd = 0;
 
+   //cprintf("exit\n");
   acquire(&ptable.lock);
 
   // Parent might be sleeping in wait().
@@ -303,7 +355,8 @@ exit(void)
 
   // Jump into the scheduler, never to return.
   curproc->state = ZOMBIE;
-  mlfqrm(curproc);
+  if(curproc->level != -1)
+    mlfqrm(curproc);
   sched();
   panic("zombie exit");
 }
@@ -317,6 +370,7 @@ wait(void)
   int havekids, pid;
   struct proc *curproc = myproc();
   
+   //cprintf("wait\n");
   acquire(&ptable.lock);
   for(;;){
     // Scan through table looking for exited children.
@@ -336,6 +390,7 @@ wait(void)
         p->name[0] = 0;
         p->killed = 0;
         p->state = UNUSED;
+        //cprintf("wait\n");
         release(&ptable.lock);
         return pid;
       }
@@ -343,6 +398,7 @@ wait(void)
 
     // No point waiting if we don't have any children.
     if(!havekids || curproc->killed){
+      //cprintf("wait\n");
       release(&ptable.lock);
       return -1;
     }
@@ -360,7 +416,89 @@ wait(void)
 //  - swtch to start running that process
 //  - eventually that process transfers control
 //      via swtch back to the scheduler.
-void
+void 
+scheduler(void)
+{
+   //cprintf("First enter scheduler\n");
+  struct cpu * c = mycpu();
+  struct proc * searchidx = ptable.proc;
+  c->proc = 0;
+
+  for(;;){
+    // Enable interrupts on this processor
+    sti();
+
+     //cprintf("scheduler\n");
+    acquire(&ptable.lock);
+
+    struct proc * newproc = NULL;
+
+    if(mlfqstr.stride_head){
+      int min_pass = mlfqstr.mlfq_pass;
+
+      struct proc * sp = mlfqstr.stride_head;
+      while(sp){
+        if(sp->pass < min_pass){
+          min_pass = sp->pass;
+          newproc = sp;
+        }
+        sp = sp->next;
+      }
+
+      // if mlfq has the smallest pass value
+      if(newproc) goto contextswitch;      
+    }
+    
+    acquire(&mlfqstr.lock);
+    // find the level to select from
+    int level;
+    if (mlfqstr.qlevels[2] > 0) level = 2;
+    else if (mlfqstr.qlevels[1] > 0) level = 1;
+    else level = 0;
+    release(&mlfqstr.lock);
+
+    // search the ptable for a runnable procee, from the mlfq, with the correct level.
+    // a process in the stride queue wont be selected because their level values are -1
+     //cprintf("entering process search loop\n");
+    
+    // we search at most 64 processes (loop through the entire ptable)
+    // before giving up and ending the search.
+    int cnt = 0;
+    struct proc* p;
+    while((p = searchidx)){
+      if(p->state == RUNNABLE && searchidx->level == level)
+        newproc = searchidx;
+
+      if(searchidx < &ptable.proc[NPROC])
+        searchidx ++;
+      else
+        searchidx = ptable.proc;
+
+      if(p->state == RUNNABLE && p->level == level){
+        newproc = p;
+        break;
+      }
+
+      if(cnt >= 63) break;
+    }
+     //cprintf("broke out of process search loop\n");
+
+contextswitch:
+    c->proc = newproc;
+    switchuvm(newproc);
+    newproc->state = RUNNING;
+    
+    // cprintf("switching to process pid %d\n", newproc->pid);
+    swtch(&(c->scheduler), newproc->context);
+    
+    switchkvm();
+    c->proc = 0;
+
+    release(&ptable.lock);
+  }
+}
+
+/*void
 scheduler(void)
 {
   struct proc *p;
@@ -373,15 +511,14 @@ scheduler(void)
 
     // Running processes in ptable in Round-Robin fashion.
     // Loop over process table looking for process to run.
-    acquire(&ptable.lock); 
-
+    acquire(&ptable.lock);
     for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
-      acquire(&mlfq.lock);
+      acquire(&mlfqstr.lock);
       int level;
-      if (mlfq.qlevels[2] > 0) level = 2;
-      else if (mlfq.qlevels[1] > 0) level = 1;
+      if (mlfqstr.qlevels[2] > 0) level = 2;
+      else if (mlfqstr.qlevels[1] > 0) level = 1;
       else level = 0;
-      release(&mlfq.lock);
+      release(&mlfqstr.lock);
       
       if(!(p->state == RUNNABLE &&  p->level == level))
         continue;
@@ -391,7 +528,7 @@ scheduler(void)
       // before jumping back to us.
       c->proc = p;
       switchuvm(p);
-      p->state = RUNNING;
+      setprocstate(p, RUNNING);
 
       swtch(&(c->scheduler), p->context);
       switchkvm();
@@ -403,7 +540,7 @@ scheduler(void)
     release(&ptable.lock);
 
   }
-}
+}*/
 
 // Enter scheduler.  Must hold only pable.lock
 // and have changed proc->state. Saves and restores
@@ -434,18 +571,15 @@ sched(void)
 void
 priboost(){
   struct proc* p;
-  // we shouldn't acquire ptable's lock because its done in callee(yield)
-  acquire(&mlfq.lock); 
   for(p=ptable.proc; p < &ptable.proc[NPROC]; p++){
-    if(p->state==RUNNABLE){
-      mlfq.qlevels[p->level]--;
+    if(p->state == RUNNABLE){
+      mlfqstr.qlevels[p->level]--;
       p->level = 2;
       p->timequant = 1;
       p->timeallot = 5;
-      mlfq.qlevels[2]++;
+      mlfqstr.qlevels[2]++;
     }
   }
-  release(&mlfq.lock);
 }
 
 void lowerlevel(struct proc* p){
@@ -453,8 +587,8 @@ void lowerlevel(struct proc* p){
     return;
   }
 
-  acquire(&mlfq.lock);
-  mlfq.qlevels[p->level]--;
+  // no need to acquire mlfqstr's lock. (done in priboost)
+  mlfqstr.qlevels[p->level]--;
   
   p->level--;
   switch(p->level){
@@ -467,8 +601,7 @@ void lowerlevel(struct proc* p){
       break;
   }
   
-  mlfq.qlevels[p->level]++;
-  release(&mlfq.lock);
+  mlfqstr.qlevels[p->level]++;
   
   p->tickcount = 0;
 }
@@ -477,36 +610,53 @@ void lowerlevel(struct proc* p){
 void
 yield(void)
 {
+   //cprintf("yield\n");
   acquire(&ptable.lock);  //DOC: yieldlock
+
+  struct proc* curproc = myproc();
   
-  uint tickcount = myproc()->tickcount++;
-  uint level = myproc()->level;
+  uint tickcount = curproc->tickcount++;
+  uint level = curproc->level;
 
   // Check if this process has used up its time allotment
+  // We skip this part for stride processes (their level values are -1)
   int lowered = 0;
-  if(level != 0 && (tickcount >= myproc()->timeallot)){
+  if(level > 0 && (tickcount >= curproc->timeallot)){
     // used up its time allot
     //cprintf("\nqlevels before lowerlevel(): {%d, %d, %d}\n", mlfq.qlevels[0], mlfq.qlevels[1], mlfq.qlevels[2]);
-    lowerlevel(myproc());
+    lowerlevel(curproc);
     lowered = 1;
-    cprintf("\nUsed Time Allot(pid: %d, level:%d)\ncurrent qlevels: {%d, %d, %d}\n", myproc()->pid, myproc()->level, mlfq.qlevels[0], mlfq.qlevels[1], mlfq.qlevels[2]);
+   // cprintf("\n\nUsed Time Allot(pid: %d, level:%d)\ncurrent qlevels: {%d, %d, %d}\n\n", myproc()->pid, myproc()->level, mlfqstr.qlevels[0], mlfqstr.qlevels[1], mlfqstr.qlevels[2]);
   }
   
   // Priority Boost
   acquire(&tickslock);
-  if(ticks - priboosttime >= 100){
-    priboosttime = ticks;
+  if(ticks - mlfqstr.priboosttime >= 100){
+    mlfqstr.priboosttime = ticks;
     priboost();
-    cprintf("\nPriboost\n");
+   // cprintf("\nPriboost\n");
   }
   release(&tickslock);
+
+  acquire(&mlfqstr.lock);
+  // If the stride queue is not empty, we have to increment pass values every time a process yields
+  if(mlfqstr.stride_head){
+    // if the yielding process is in the stride queue
+    if(level == -1) curproc->pass += curproc->stride;
+
+    // if the yielding process is in the mlfq
+    else mlfqstr.mlfq_pass += mlfqstr.mlfq_stride;
+  }
+  release(&mlfqstr.lock);
   
   // Do not call scheduler if it hasn't used up its time quantum
-  if(lowered || tickcount % myproc()->timequant == 0){
-    myproc()->state = RUNNABLE;
+  // Processes in stride queue will always call the scheduler because their time quantum is 1.
+  if(lowered || tickcount % curproc->timequant == 0){
+    curproc->state = RUNNABLE;
     sched();
   }
 
+  //cprintf("yield");
   release(&ptable.lock);
 }
 
@@ -517,6 +667,7 @@ forkret(void)
 {
   static int first = 1;
   // Still holding ptable.lock from scheduler.
+   //cprintf("forkret\n");
   release(&ptable.lock);
 
   if (first) {
@@ -551,13 +702,15 @@ sleep(void *chan, struct spinlock *lk)
   // (wakeup runs with ptable.lock locked),
   // so it's okay to release lk.
   if(lk != &ptable.lock){  //DOC: sleeplock0
+     //cprintf("sleep (pid:%d)\n", p->pid);
     acquire(&ptable.lock);  //DOC: sleeplock1
     release(lk);
   }
   // Go to sleep.
   p->chan = chan;
   p->state = SLEEPING;
-  mlfqrm(p);
+  if(p->level != -1)
+    mlfqrm(p);
 
   sched();
 
@@ -566,6 +719,7 @@ sleep(void *chan, struct spinlock *lk)
 
   // Reacquire original lock.
   if(lk != &ptable.lock){  //DOC: sleeplock2
+    //cprintf("sleep\n");
     release(&ptable.lock);
     acquire(lk);
   }
@@ -579,17 +733,21 @@ wakeup1(void *chan)
 {
   struct proc *p;
 
-  for(p = ptable.proc; p < &ptable.proc[NPROC]; p++)
+  for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
     if(p->state == SLEEPING && p->chan == chan){
       p->state = RUNNABLE;
-      mlfqadd(p);
+     // cprintf("wakeup(pid: %d)\n", p->pid);
+      if(p->level != -1)
+        mlfqadd(p);
     }
+  }
 }
 
 // Wake up all processes sleeping on chan.
 void
 wakeup(void *chan)
 {
+   //cprintf("wakeup\n");
   acquire(&ptable.lock);
   wakeup1(chan);
   release(&ptable.lock);
@@ -603,6 +761,7 @@ kill(int pid)
 {
   struct proc *p;
 
+   //cprintf("kill\n");
   acquire(&ptable.lock);
   for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
     if(p->pid == pid){
@@ -610,7 +769,8 @@ kill(int pid)
       // Wake process from sleep if necessary.
       if(p->state == SLEEPING){
         p->state = RUNNABLE;
-        mlfqadd(p);
+        if(p->level != -1)
+          mlfqadd(p);
       }
       release(&ptable.lock);
       return 0;
@@ -664,4 +824,57 @@ getlev(void){
     return -1;
   else
     return level;
+}
+
+int 
+set_cpu_share(int share)
+{
+   //cprintf("setcpushare\n");
+  acquire(&ptable.lock);
+  acquire(&mlfqstr.lock);
+
+  if(mlfqstr.stride_share + share > 80)
+    return -1;
+  mlfqstr.stride_share += share;
+
+  struct proc * p = myproc();
+  
+  // if stride queue is empty
+  if(!mlfqstr.stride_head){
+    // remove the process from mlfq
+    mlfqrm(p);
+
+    // add the process to stride queue
+    mlfqstr.stride_head = p;
+  }
+  else{
+    struct proc* pptr = mlfqstr.stride_head;
+    while(pptr){
+      if(pptr->pid == p->pid)
+        break;
+      pptr = pptr->next;
+    }
+
+    // this process was not already in stride queue -> currently in mlfq
+    if(!pptr){
+      // remove from mlfq
+      mlfqrm(p);
+      // add to the front of the stride queue
+      p->next = mlfqstr.stride_head;
+      mlfqstr.stride_head = p->next;
+    }
+  }
+
+  int stride = (int)(STRIDE_DIVIDEND/share + 0.5); // round up
+  p->stride = stride;
+  p->pass = 0;
+  p->level = -1;
+  p->timequant = 1;
+  
+  mlfqstr.mlfq_stride = (int)(STRIDE_DIVIDEND/(100-mlfqstr.stride_share) + 0.5);
+
+  //cprintf("setcpushare");
+  release(&ptable.lock);
+  release(&mlfqstr.lock);
+  return 0; 
 }

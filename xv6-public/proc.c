@@ -433,6 +433,7 @@ scheduler(void)
 
     struct proc * newproc = NULL;
 
+    acquire(&mlfqstr.lock);
     if(mlfqstr.stride_head){
       int min_pass = mlfqstr.mlfq_pass;
 
@@ -449,7 +450,6 @@ scheduler(void)
       if(newproc) goto contextswitch;      
     }
     
-    acquire(&mlfqstr.lock);
     // find the level to select from
     int level;
     if (mlfqstr.qlevels[2] > 0) level = 2;
@@ -466,9 +466,6 @@ scheduler(void)
     int cnt = 0;
     struct proc* p;
     while((p = searchidx)){
-      if(p->state == RUNNABLE && searchidx->level == level)
-        newproc = searchidx;
-
       if(searchidx < &ptable.proc[NPROC])
         searchidx ++;
       else
@@ -484,6 +481,9 @@ scheduler(void)
      //cprintf("broke out of process search loop\n");
 
 contextswitch:
+    // Switch to chose process. It is the process's job 
+    // to release ptable.lock (in yield) and then reacquire it(when the switched in process yields)
+    // before jumping back to us. 
     c->proc = newproc;
     switchuvm(newproc);
     newproc->state = RUNNING;

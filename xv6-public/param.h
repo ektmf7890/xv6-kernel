@@ -11,5 +11,7 @@
 #define LOGSIZE      (MAXOPBLOCKS*3)  // max data blocks in on-disk log
 #define NBUF         (MAXOPBLOCKS*3)  // size of disk block cache
 #define FSSIZE       1000  // size of file system in blocks
-#define STRIDE_DIVIDEND 1000 // large number used to calculate stride in stride scheduling
-#define NULL (void*)0
+#define STRIDE_DIVIDEND 10000 // large number used to calculate stride in stride scheduling
+#ifndef NULL
+#define NULL ((void*)0)
+#endif

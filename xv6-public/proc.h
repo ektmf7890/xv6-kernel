@@ -40,7 +40,7 @@ struct proc {
   uint timeallot;              // time allotment 
   uint timequant;              // time quantum
   uint tickcount;              // #of ticks this process has used
-  //int cpu_share;             // designated CPU share for stride scheduling
+  int share;             // designated CPU share for stride scheduling
   int stride;                  // stride = (int)(1000 / cpu_share)
   int pass;                    // pass += stride * (# of ticks used in current round)
   struct proc* next;           // points to the next process when placed in mlfq or stride queue. 

@@ -19,7 +19,7 @@
  * value by calling set_cpu_share() system call.
  * It reports the cnt value which have been accumulated during LIFETIME.
  */
-void
+int
 test_stride(int portion)
 {
 	int cnt = 0;
@@ -29,7 +29,7 @@ test_stride(int portion)
 
 	if (set_cpu_share(portion) != 0) {
 		printf(1, "FAIL : set_cpu_share\n");
-		return;
+		return -1;
 	}
 
 	/* Get start tick */
@@ -52,9 +52,9 @@ test_stride(int portion)
 	}
 
 	/* Report */
-	printf(1, "STRIDE(%d%%), cnt : %d\n", portion, cnt);
+	printf(1, "PID %d, STRIDE(%d%%) -> cnt : %d\n", getpid(), portion, cnt);
 
-	return;
+	return cnt;
 }
 
 /**
@@ -65,7 +65,7 @@ test_stride(int portion)
  * MLFQ_YIELD_LEVCNT	: yield itself, report the cnt values about each level
  */
 enum { MLFQ_NONE, MLFQ_LEVCNT, MLFQ_YIELD, MLFQ_LEVCNT_YIELD };
-void
+int
 test_mlfq(int type)
 {
 	int cnt_level[MLFQ_LEVEL] = {0, 0, 0};
@@ -107,18 +107,18 @@ test_mlfq(int type)
 
 	/* Report */
 	if (type == MLFQ_LEVCNT || type == MLFQ_LEVCNT_YIELD ) {
-		printf(1, "MLfQ(%s), cnt : %d, lev[0] : %d, lev[1] : %d, lev[2] : %d\n",
+		printf(1, "PID %d, MLfQ(%s) -> cnt : %d, lev[0] : %d, lev[1] : %d, lev[2] : %d\n", getpid(),
 				type == MLFQ_LEVCNT ? "compute" : "yield", cnt, cnt_level[0], cnt_level[1], cnt_level[2]);
 	} else {
-		printf(1, "MLfQ(%s), cnt : %d\n",
+		printf(1, "PID %d, MLfQ(%s) -> cnt : %d\n", getpid(),
 				type == MLFQ_NONE ? "compute" : "yield", cnt);
 	}
 
-	return;
+	return cnt;
 }
 
 struct workload {
-	void (*func)(int);
+	int (*func)(int);
 	int arg;
 };
 
@@ -147,7 +147,7 @@ main(int argc, char *argv[])
 			continue;
 		} else if (pid == 0) {
 			/* Child */
-			void (*func)(int) = workloads[i].func;
+			int (*func)(int) = workloads[i].func;
 			int arg = workloads[i].arg;
 			/* Do this workload */
 			func(arg);
@@ -155,11 +155,11 @@ main(int argc, char *argv[])
 		} else {
 			printf(1, "FAIL : fork\n");
 			exit();
-		}
+    }
 	}
 
 	for (i = 0; i < WORKLOAD_NUM; i++) {
-		wait();
+    wait();
 	}
 
 	exit();

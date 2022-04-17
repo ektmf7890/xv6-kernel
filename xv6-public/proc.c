@@ -7,17 +7,16 @@
 #include "proc.h"
 #include "spinlock.h"
 
-void procdump(void);
 
 // protected data for scheduling tasks
 struct{
   uint priboosttime;         // Counts num of ticks passed since last pri boost. Checked at process yield.
-  int mlfq_pass;             // Pass value of mlfq processes
-  int mlfq_stride;           // Stride value of mlfq processes -> changes whenever set_cpu_share called
-  int stride_share;          // Sum of CPU share non-lmfq processes are occupying.
+  uint mlfq_pass;             // Pass value of mlfq processes
+  uint mlfq_stride;           // Stride value of mlfq processes -> changes whenever set_cpu_share called.
+  int mlfq_proc_cnt;         // Number of processes in the mlfq. Used when finding min pass value in stride scheduler.
+  int stride_share;          // Sum of CPU share non-mlfq processes are occupying.
   struct proc* stride_head;  // Linked list of processes in stride queue.
   int qlevels[3];            // Number of processes in each mlfq level.
-//  struct proc* mlfq_head;    // Linked list of processes in mlfq.
   struct spinlock lock;
 }mlfqstr;
 
@@ -34,14 +33,13 @@ extern void trapret(void);
 
 static void wakeup1(void *chan);
 
-// remove a process from mlfq when its state changes from RUNNABLE/RUNNING to different state
+// remove a process from mlfq when its state changes from RUNNABLE to different state
 // ptable lock should be acquired in caller
 void 
 mlfqrm(struct proc* p){
   if(p->level >= 0 && p->level <= 2)
     mlfqstr.qlevels[p->level]--;
-
-  //cprintf("level2: %d, level1: %d, level0: %d\n", mlfqstr.qlevels[2], mlfqstr.qlevels[1], mlfqstr.qlevels[0]);
+  mlfqstr.mlfq_proc_cnt--;
 }
 
 // add a process to mlfq when its status is changed to RUNNABLE
@@ -51,10 +49,47 @@ mlfqadd(struct proc* p)
 {
   if(p->level >= 0 && p->level <= 2)
     mlfqstr.qlevels[p->level]++;
-  
-  //cprintf("level2: %d, level1: %d, level0: %d\n", mlfqstr.qlevels[2], mlfqstr.qlevels[1], mlfqstr.qlevels[0]);
+  mlfqstr.mlfq_proc_cnt++;
 }
   
+void 
+striderm(struct proc * p)
+{
+  struct proc * pptr = mlfqstr.stride_head;
+
+  // If p is at the head of the stride queue.
+  if(pptr == p)
+    mlfqstr.stride_head = pptr->next; 
+
+  else{
+    while(pptr){
+      if(pptr->next == p){
+        pptr->next = p->next;
+        break;
+      }
+      pptr = pptr->next;
+    } 
+  }
+  
+  p->next = NULL;
+
+  // reset the mlfq share and mlfq stride
+  mlfqstr.stride_share -= p->share;
+  mlfqstr.mlfq_stride = (int)(STRIDE_DIVIDEND/(100-mlfqstr.stride_share) + 0.5);
+
+  // If the stride queue becomes empty, we reset the mlfq's pass value to 0
+  if(!mlfqstr.stride_head)
+    mlfqstr.mlfq_pass = 0;
+  cprintf("mlfq share: %d, mlfq stride: %d, mlfq pass: %d\n", 100-mlfqstr.stride_share, mlfqstr.mlfq_stride, mlfqstr.mlfq_pass);
+}
+
+void 
+strideadd(struct proc * p)
+{
+  // Add to the front of the stride queue.
+  p->next = mlfqstr.stride_head;
+  mlfqstr.stride_head = p;
+}
 
 void
 pinit(void)
@@ -66,7 +101,6 @@ pinit(void)
   acquire(&mlfqstr.lock);
   mlfqstr.priboosttime = 0;
   mlfqstr.qlevels[0] = mlfqstr.qlevels[1] = mlfqstr.qlevels[2] = 0;
-  //mlfqstr.mlfq_head = NULL;
   mlfqstr.stride_head = NULL;
   mlfqstr.stride_share = 0;
   mlfqstr.mlfq_pass = 0;
@@ -124,14 +158,12 @@ allocproc(void)
   struct proc *p;
   char *sp;
 
-   //cprintf("allocproc\n");
   acquire(&ptable.lock);
 
   for(p = ptable.proc; p < &ptable.proc[NPROC]; p++)
     if(p->state == UNUSED)
       goto found;
 
-  //cprintf("allocproc");
   release(&ptable.lock);
   return 0;
 
@@ -143,12 +175,13 @@ found:
   p->level = 2;
   p->timequant = 1;
   p->timeallot = 5;
+  
+  // Initialize values needed when added to stride queue.
   p->next = NULL; 
+  p->share = 0;
   p->stride = -1;
   p->pass = 0;
- // cprintf("\nEmbryo process made(pid: %d)\n", p->pid);
 
-  //cprintf("allorproc2");
   release(&ptable.lock);
 
   // Allocate kernel stack.
@@ -207,16 +240,13 @@ userinit(void)
   // run this process. the acquire forces the above
   // writes to be visible, and the lock is also needed
   // because the assignment might not be atomic.
-   //cprintf("userinit\n");
   acquire(&ptable.lock);
-
   p->state = RUNNABLE;
+  release(&ptable.lock);
+  
   acquire(&mlfqstr.lock);
   mlfqadd(p);
   release(&mlfqstr.lock);
-
-  //cprintf("userinit");
-  release(&ptable.lock);
 }
 
 // Grow current process's memory by n bytes.
@@ -279,7 +309,6 @@ fork(void)
 
   pid = np->pid;
 
-   //cprintf("fork`\n");
   acquire(&ptable.lock);
 
   np->state = RUNNABLE;
@@ -289,7 +318,6 @@ fork(void)
     release(&mlfqstr.lock);
   }
 
- // cprintf("fork\n");
   release(&ptable.lock);
 
   return pid;
@@ -337,9 +365,16 @@ exit(void)
 
   // Jump into the scheduler, never to return.
   curproc->state = ZOMBIE;
+  // Remove from mflq
   if(curproc->level != -1){
     acquire(&mlfqstr.lock);
     mlfqrm(curproc);
+    release(&mlfqstr.lock);
+  }
+  // Remove from stride queue
+  else{
+    acquire(&mlfqstr.lock);
+    striderm(curproc);
     release(&mlfqstr.lock);
   }
   sched();
@@ -355,7 +390,6 @@ wait(void)
   int havekids, pid;
   struct proc *curproc = myproc();
   
-   //cprintf("wait\n");
   acquire(&ptable.lock);
   for(;;){
     // Scan through table looking for exited children.
@@ -375,7 +409,6 @@ wait(void)
         p->name[0] = 0;
         p->killed = 0;
         p->state = UNUSED;
-        //cprintf("wait\n");
         release(&ptable.lock);
         return pid;
       }
@@ -383,7 +416,6 @@ wait(void)
 
     // No point waiting if we don't have any children.
     if(!havekids || curproc->killed){
-      //cprintf("wait\n");
       release(&ptable.lock);
       return -1;
     }
@@ -418,15 +450,17 @@ scheduler(void)
 
     acquire(&mlfqstr.lock);
     if(mlfqstr.stride_head){
-      int min_pass;
-      int mlfq_processes = mlfqstr.qlevels[0] + mlfqstr.qlevels[1] + mlfqstr.qlevels[2];
-      if(mlfq_processes > 0)
+      // Find the process with the least pass value
+      uint min_pass;
+      struct proc* sp = mlfqstr.stride_head;
+
+      if(mlfqstr.mlfq_proc_cnt > 0){
         min_pass = mlfqstr.mlfq_pass;
+      }
       else{
         min_pass = mlfqstr.stride_head->pass;
       }
 
-      struct proc * sp = mlfqstr.stride_head;
       while(sp){
         if(sp->pass <= min_pass && sp->state == RUNNABLE){
           min_pass = sp->pass;
@@ -442,17 +476,18 @@ scheduler(void)
       }
     }
     
-    // find the level to select from
+    // Search process to run from mlfq.
+    // First, find the level to select from.
     int level;
     if (mlfqstr.qlevels[2] > 0) level = 2;
     else if (mlfqstr.qlevels[1] > 0) level = 1;
     else level = 0;
     release(&mlfqstr.lock);
 
-    // search the ptable for a runnable procee, from the mlfq, with the correct level.
-    // a process in the stride queue wont be selected because their level values are -1
+    // Search the ptable for a runnable process, from the mlfq, with the correct level.
+    // A process in the stride queue wont be selected because their level values are -1
     
-    // we search at most 64 processes (loop through the entire ptable)
+    // We search at most 64 processes (loop through the entire ptable)
     // before giving up and ending the search.
     int cnt = 0;
     struct proc* p;
@@ -471,17 +506,26 @@ scheduler(void)
         break;
       cnt++;
     }
-    if(!newproc) goto norunnable;
+    if(!newproc){
+      /*if(mlfqstr.stride_head){
+        cprintf("\n no process to run!\n");
+        struct proc * t = mlfqstr.stride_head;
+        while(t){
+          cprintf(" stride - pid %d\n", t->pid);
+          t = t->next;
+        }
+      }*/
+      goto norunnable;
+    }
 
 contextswitch:
-    // Switch to chose process. It is the process's job 
+    // Switch to chosen process. It is the process's job 
     // to release ptable.lock (in yield) and then reacquire it(when the switched in process yields)
     // before jumping back to us. 
     c->proc = newproc;
     switchuvm(newproc);
     newproc->state = RUNNING;
     
-    //cprintf("PID %d scheduled (pass: %d, stride: %d, level: %d)\n", newproc->pid, newproc->pass, newproc->stride, newproc->level);
     swtch(&(c->scheduler), newproc->context);
     
     switchkvm();
@@ -537,7 +581,7 @@ void lowerlevel(struct proc* p){
     return;
   }
 
-  // no need to acquire mlfqstr's lock. (done in priboost)
+  // no need to acquire mlfqstr's lock. (done in yield)
   mlfqstr.qlevels[p->level]--;
   
   p->level--;
@@ -602,7 +646,6 @@ yield(void)
     sched();
   }
 
-  //cprintf("yield");
   release(&ptable.lock);
 }
 
@@ -711,7 +754,6 @@ kill(int pid)
 {
   struct proc *p;
 
-   //cprintf("kill\n");
   acquire(&ptable.lock);
   for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
     if(p->pid == pid){
@@ -785,9 +827,14 @@ set_cpu_share(int share)
   acquire(&ptable.lock);
   acquire(&mlfqstr.lock);
 
+  // 0 -> wrong input error
+  if(share <= 0)
+    return -1;
+
+  // Total requeste CPU share > 80 -> error
   if(mlfqstr.stride_share + share > 80)
     return -1;
-  mlfqstr.stride_share += share;
+
 
   struct proc * p = myproc();
   
@@ -807,21 +854,31 @@ set_cpu_share(int share)
       pptr = pptr->next;
     }
 
-    // this process was not already in stride queue -> currently in mlfq
+    // This process was not already in stride queue -> currently in mlfq
     if(!pptr){
-      // remove from mlfq
+      // Remove from mlfq
       mlfqrm(p);
-      // add to the front of the stride queue
-      p->next = mlfqstr.stride_head;
-      mlfqstr.stride_head = p;
+
+      // Add to the stride queue
+      strideadd(p);
     }
+
+    // If this process is already in the stride queue, we don't have to worry about it.
+    // Since the stride_head contains pointers to the proc structs, we simply change the values of myproc().
   }
 
+  mlfqstr.stride_share += share;
+  p->share = share;
+
   int stride = (int)(STRIDE_DIVIDEND/share + 0.5); // round up
-  p->stride = stride;
-  p->pass = 0;
+  p->stride = stride; 
+  
   p->level = -1;
   p->timequant = 1;
+  
+  // Pass value is already set to 0 in allocproc.
+  // If the process is already in the stride queue, we don't update pass to 0
+  // because it would monopolize the cpu for the first few runs.
   
   mlfqstr.mlfq_stride = (int)(STRIDE_DIVIDEND/(100-mlfqstr.stride_share) + 0.5);
 

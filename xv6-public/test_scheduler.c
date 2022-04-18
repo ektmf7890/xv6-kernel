@@ -7,12 +7,12 @@
 #include "stat.h"
 #include "user.h"
 
-#define LIFETIME		(1000)	/* (ticks) */
+#define LIFETIME		(5000)	/* (ticks) */
 #define COUNT_PERIOD	(1000000)	/* (iteration) */
 
 #define MLFQ_LEVEL		(3)	/* Number of level(priority) of MLFQ scheduler */
 
-#define WORKLOAD_NUM	(4) /* The number of workloads */
+#define WORKLOADNUM	(4) /* The number of workloads */
 
 /**
  * This function requests portion of CPU resources with given parameter
@@ -52,7 +52,7 @@ test_stride(int portion)
 	}
 
 	/* Report */
-	printf(1, "PID %d, STRIDE(%d%%) -> cnt : %d\n", getpid(), portion, cnt);
+	printf(1, "STRIDE(%d%%) -> cnt : %d\n", portion, cnt);
 
 	return cnt;
 }
@@ -107,10 +107,10 @@ test_mlfq(int type)
 
 	/* Report */
 	if (type == MLFQ_LEVCNT || type == MLFQ_LEVCNT_YIELD ) {
-		printf(1, "PID %d, MLfQ(%s) -> cnt : %d, lev[0] : %d, lev[1] : %d, lev[2] : %d\n", getpid(),
+		printf(1, "MLfQ(%s) -> cnt : %d, lev[0] : %d, lev[1] : %d, lev[2] : %d\n", 
 				type == MLFQ_LEVCNT ? "compute" : "yield", cnt, cnt_level[0], cnt_level[1], cnt_level[2]);
 	} else {
-		printf(1, "PID %d, MLfQ(%s) -> cnt : %d\n", getpid(),
+		printf(1, "MLfQ(%s) -> cnt : %d\n",
 				type == MLFQ_NONE ? "compute" : "yield", cnt);
 	}
 
@@ -129,18 +129,19 @@ main(int argc, char *argv[])
 	int i;
 
 	/* Workload list */
-	struct workload workloads[WORKLOAD_NUM] = {
-		/* Process scheduled by Stride scheduler, use 5% of CPU resources */
-		{test_stride, 5},
-		/* Process scheduled by Stride scheduler, use 15% of CPU resources */
-		{test_stride, 15},
+	struct workload workloads[WORKLOADNUM] = {
 		/* Process scheduled by MLFQ scheduler, does not yield itself */
 		{test_mlfq, MLFQ_LEVCNT},
 		/* Process scheduled by MLFQ scheduler, does not yield itself */
 		{test_mlfq, MLFQ_NONE},
+		/* Process scheduled by Stride scheduler, use 5% of CPU resources */
+		//{test_stride, 80},
+		/* Process scheduled by Stride scheduler, use 15% of CPU resources */
+		{test_stride, 25},
+    {test_stride, 5},
 	};
 
-	for (i = 0; i < WORKLOAD_NUM; i++) {
+	for (i = 0; i < WORKLOADNUM; i++) {
 		pid = fork();
 		if (pid > 0) {
 			/* Parent */
@@ -158,7 +159,7 @@ main(int argc, char *argv[])
     }
 	}
 
-	for (i = 0; i < WORKLOAD_NUM; i++) {
+	for (i = 0; i < WORKLOADNUM; i++) {
     wait();
 	}
 

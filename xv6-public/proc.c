@@ -80,7 +80,7 @@ striderm(struct proc * p)
   // If the stride queue becomes empty, we reset the mlfq's pass value to 0
   if(!mlfqstr.stride_head)
     mlfqstr.mlfq_pass = 0;
-  cprintf("mlfq share: %d, mlfq stride: %d, mlfq pass: %d\n", 100-mlfqstr.stride_share, mlfqstr.mlfq_stride, mlfqstr.mlfq_pass);
+  //cprintf("mlfq share: %d, mlfq stride: %d, mlfq pass: %d\n", 100-mlfqstr.stride_share, mlfqstr.mlfq_stride, mlfqstr.mlfq_pass);
 }
 
 void 
@@ -175,6 +175,7 @@ found:
   p->level = 2;
   p->timequant = 1;
   p->timeallot = 5;
+  p->tickcount = 0;
   
   // Initialize values needed when added to stride queue.
   p->next = NULL; 
@@ -571,6 +572,7 @@ priboost(){
       p->level = 2;
       p->timequant = 1;
       p->timeallot = 5;
+      p->tickcount = 0;
       mlfqstr.qlevels[2]++;
     }
   }
@@ -585,6 +587,7 @@ void lowerlevel(struct proc* p){
   mlfqstr.qlevels[p->level]--;
   
   p->level--;
+  p->tickcount = 0;
   switch(p->level){
     case 1:
       p->timequant = 2;

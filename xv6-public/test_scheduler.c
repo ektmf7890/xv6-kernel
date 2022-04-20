@@ -7,12 +7,12 @@
 #include "stat.h"
 #include "user.h"
 
-#define LIFETIME		(5000)	/* (ticks) */
+#define LIFETIME		(1000)	/* (ticks) */
 #define COUNT_PERIOD	(1000000)	/* (iteration) */
 
 #define MLFQ_LEVEL		(3)	/* Number of level(priority) of MLFQ scheduler */
 
-#define WORKLOADNUM	(4) /* The number of workloads */
+#define WORKLOADNUM	(2) /* The number of workloads */
 
 /**
  * This function requests portion of CPU resources with given parameter
@@ -131,14 +131,12 @@ main(int argc, char *argv[])
 	/* Workload list */
 	struct workload workloads[WORKLOADNUM] = {
 		/* Process scheduled by MLFQ scheduler, does not yield itself */
-		{test_mlfq, MLFQ_LEVCNT},
+		{test_mlfq, MLFQ_YIELD},
 		/* Process scheduled by MLFQ scheduler, does not yield itself */
-		{test_mlfq, MLFQ_NONE},
 		/* Process scheduled by Stride scheduler, use 5% of CPU resources */
 		//{test_stride, 80},
 		/* Process scheduled by Stride scheduler, use 15% of CPU resources */
-		{test_stride, 25},
-    {test_stride, 5},
+		{test_stride, 20},
 	};
 
 	for (i = 0; i < WORKLOADNUM; i++) {

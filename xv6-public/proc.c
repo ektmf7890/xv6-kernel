@@ -526,6 +526,7 @@ contextswitch:
     c->proc = newproc;
     switchuvm(newproc);
     newproc->state = RUNNING;
+    //cprintf("PID %d) level = %d, tickcount = %d\n", newproc->pid, newproc->level, newproc->tickcount);
     
     swtch(&(c->scheduler), newproc->context);
     
@@ -599,12 +600,10 @@ void lowerlevel(struct proc* p){
   }
   
   mlfqstr.qlevels[p->level]++;
-  
-  p->tickcount = 0;
 }
 
 // Give up the CPU for one scheduling round.
-void
+int
 yield(void)
 {
   acquire(&ptable.lock);  //DOC: yieldlock
@@ -650,6 +649,8 @@ yield(void)
   }
 
   release(&ptable.lock);
+
+  return 0;
 }
 
 // A fork child's very first scheduling by scheduler()

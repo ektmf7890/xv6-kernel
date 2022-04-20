@@ -99,8 +99,7 @@ sys_uptime(void)
 int
 sys_yield(void)
 {
-   yield();
-   return 0;
+   return yield();
 }
 
 int 

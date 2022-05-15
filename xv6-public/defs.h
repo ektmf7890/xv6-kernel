@@ -1,3 +1,7 @@
+#ifndef LWP_H
+#define LWP_H
+#include "lwp.h"
+#endif
 struct buf;
 struct context;
 struct file;
@@ -9,6 +13,7 @@ struct spinlock;
 struct sleeplock;
 struct stat;
 struct superblock;
+//typedef struct _thread_t thread_t;
 
 // bio.c
 void            binit(void);
@@ -122,6 +127,22 @@ void            wakeup(void*);
 int             yield(void);
 int             getlev(void);
 int             set_cpu_share(int);
+struct proc*    find_unused(void);
+struct proc*    find_thread(int, int);
+void            sleep_main_thread(struct proc*);
+void acquire_ptable();
+void release_ptable();
+void rm_thread(struct proc*);
+void add_thread(struct proc*);
+int  update_next_t(struct proc*);
+void init_next_t(struct proc*, int);
+int is_holding_ptable();
+
+// lwp.c
+int             thread_create(thread_t* thread, void* (*start_routine) (void*), void* arg);
+void            thread_exit(void* retval);
+int             thread_join(thread_t t, void** retval);
+
 
 // swtch.S
 void            swtch(struct context**, struct context*);

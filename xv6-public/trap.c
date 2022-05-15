@@ -40,6 +40,9 @@ trap(struct trapframe *tf)
     if(myproc()->killed)
       exit();
     myproc()->tf = tf;
+   // if(tf->eax == 27){
+     // cprintf("trapped to call sys_thread_create\n");
+    //}
     syscall();
     if(myproc()->killed)
       exit();

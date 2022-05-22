@@ -137,6 +137,7 @@ void add_thread(struct proc*);
 int  update_next_t(struct proc*);
 void init_next_t(struct proc*, int);
 int is_holding_ptable();
+void thread_swtch(struct proc*, struct proc*);
 
 // lwp.c
 int             thread_create(thread_t* thread, void* (*start_routine) (void*), void* arg);
@@ -208,6 +209,7 @@ void            switchuvm(struct proc*);
 void            switchkvm(void);
 int             copyout(pde_t*, uint, void*, uint);
 void            clearpteu(pde_t *pgdir, char *uva);
+//static pte_t*   walkpgdir(pde_t*, const void*, int);
 
 //prac_syscall.c
 int 		my_syscall(char*);

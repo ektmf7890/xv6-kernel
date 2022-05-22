@@ -40,17 +40,18 @@ struct proc {
   uint timeallot;              // time allotment 
   uint timequant;              // time quantum
   uint tickcount;              // #of ticks this process has used
+  uint ustack;
   int share;                   // designated CPU share for stride scheduling
   int stride;                  // stride = (int)(10,000 / cpu_share)
   int pass;                    // pass += stride * (# of ticks used in current round)
-  int dont_sched;
-  int caller_isnt_yield;
+  int waiting_tid;
   int thread_count;            // number of threads in a LWP group.
   int next_tid;
   int thread_id;               // thread_id in the case the proc is a LWP.
   struct proc* lwpgroup;       // points to the main thread process if this proc is a LWP.
   struct proc* t_link;    // pointer to the next thread(in the lwp group) to be scheduled.
   struct proc* s_link;           // points to the next process when placed in stride queue. 
+  int retval;
   uint sz;                     // Size of process memory (bytes)
   pde_t* pgdir;                // Page table
   char *kstack;                // Bottom of kernel stack for this process

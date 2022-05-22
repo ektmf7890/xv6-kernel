@@ -191,7 +191,8 @@ found:
   p->next_tid = 1;
   p->lwpgroup = p;
   p->dont_sched = 0;
-  p->caller_isnt_yield = 0;
+  //p->caller_isnt_yield = 0;
+  p->waiting_tid = -1;
 
   release(&ptable.lock);
 
@@ -306,6 +307,7 @@ fork(void)
     return -1;
   }
   np->sz = curproc->sz;
+  np->ustack = np->sz;
   np->parent = curproc;
   *np->tf = *curproc->tf;
 
@@ -453,7 +455,7 @@ scheduler(void)
   struct cpu * c = mycpu();
   struct proc * searchidx = ptable.proc;
   c->proc = 0;
-  int caller_isnt_yield;
+  //int caller_isnt_yield;
 
   for(;;){
     // Enable interrupts on this processor
@@ -515,8 +517,6 @@ scheduler(void)
         searchidx = ptable.proc;
 
       if((p->state == RUNNABLE) && (p->level == level) && (p->pid!=-1)){
-        //if(p->dont_sched)
-          //cprintf("found a dont sched process\n");
         newproc = p;
         goto contextswitch;
       }
@@ -531,24 +531,21 @@ scheduler(void)
     }
     
 contextswitch:
-    caller_isnt_yield = newproc->caller_isnt_yield;
-    newproc->caller_isnt_yield = 0;
     // If this process is a main thread of a lwp group with mutiple threads 
     if(newproc->thread_count > 1){
-      //cprintf("found lwp group\n");
       newproc = mlfqstr.next_t[newproc->pid];
+      update_next_t(newproc->lwpgroup);
       
       // if the scheduled process is a main_thread that is waiting in thread_join,
       // we schedule in a different thread from the lwp group.
-      if(newproc->dont_sched){
-        update_next_t(newproc);
+      if(newproc->waiting_tid != -1 || newproc->state != RUNNABLE){
         newproc = mlfqstr.next_t[newproc->pid];
+        update_next_t(newproc);
       }
-
-      update_next_t(newproc->lwpgroup);
 
       //cprintf("about to run thread tid:%d\n", newproc->thread_id);
     }
+    //caller_isnt_yield = newproc->caller_isnt_yield;
 
     // Switch to chosen process. It is the process's job 
     // to release ptable.lock (in yield) and then reacquire it(when the switched in process yields)
@@ -557,10 +554,9 @@ contextswitch:
     switchuvm(newproc);
     newproc->state = RUNNING;
    
-    if(caller_isnt_yield){
-      //cprintf("released ptable lock cuz caller was not yield\n");
-      release(&ptable.lock);
-    }
+  // if(caller_isnt_yield){
+    //  release(&ptable.lock);
+   // }
 
     swtch(&(c->scheduler), newproc->context);
     
@@ -643,6 +639,26 @@ void lowerlevel(struct proc* p){
   mlfqstr.qlevels[p->level]++;
 }
 
+void
+thread_swtch(struct proc* curproc, struct proc* main_thread)
+{
+  struct proc* next_t;
+  acquire(&mlfqstr.lock);
+  next_t = mlfqstr.next_t[main_thread->pid];
+  update_next_t(main_thread);
+
+  if(next_t->waiting_tid != -1 || next_t->state != RUNNABLE){
+    next_t = mlfqstr.next_t[main_thread->pid];
+    update_next_t(main_thread);
+  }
+  release(&mlfqstr.lock);
+
+  mycpu()->proc = next_t;
+  switchuvm(next_t);
+  next_t->state = RUNNING;
+  swtch(&curproc->context, next_t->context);
+}
+
 // Give up the CPU for one scheduling round.
 int
 yield(void)
@@ -651,6 +667,7 @@ yield(void)
 
   struct proc* curproc = myproc();
   struct proc* main_thread = curproc->lwpgroup;
+  int intena = mycpu()->intena;
   
   uint tickcount = main_thread->tickcount++;
   uint level = main_thread->level;
@@ -690,18 +707,28 @@ yield(void)
   // we choose the next thread to run here and context switch.
   // We do not context switch through the scheduler.
   if(main_thread->thread_count > 1){
-    //cprintf("thread %d is yielding\n", curproc->thread_id);
-    struct proc* next_t = mlfqstr.next_t[main_thread->pid];
-    
-    update_next_t(main_thread);
+    //struct proc* next_t = mlfqstr.next_t[main_thread->pid];
+    //update_next_t(main_thread);
     
     curproc->state = RUNNABLE;
+    intena = mycpu()->intena;
+    thread_swtch(curproc, main_thread);
+    mycpu()->intena = intena;
 
-    mycpu()->proc = next_t;
+   // cprintf("switching to thread- pid:%d, tid:%d\n", main_thread->pid, next_t->thread_id);
+
+    //mycpu()->proc = next_t;
     //switchuvm(next_t);
-    cprintf("switching to thread- pid:%d, tid:%d\n", main_thread->pid, next_t->thread_id);
-    switchuvm(next_t);
-    swtch(&(curproc->context), next_t->context);
+    //next_t->state = RUNNING;
+
+   // if(next_t->caller_isnt_yield){
+     // release(&ptable.lock);
+   // }
+
+    //swtch(&(curproc->context), next_t->context);
+    //mycpu()->intena = intena;
+
+   // cprintf("switching back to thread - pid:%d, tid: %d\n", main_thread->pid, curproc->thread_id);
   }
   
   // Do not call scheduler if it hasn't used up its time quantum
@@ -1001,9 +1028,9 @@ void init_next_t(struct proc* p, int pid)
 int
 update_next_t(struct proc* main_t)
 {
-  //acquire(&mlfqstr.lock);
   struct proc* old_t = mlfqstr.next_t[main_t->pid];
   struct proc* new_t;
+
   if(!old_t)
     cprintf("old_t is null\n");
 
@@ -1019,13 +1046,12 @@ update_next_t(struct proc* main_t)
 
   // when we search one full cycle and still couldnt find a reunnable thread, we return -1;
   while(new_t != old_t){
-    if(new_t->state == RUNNABLE && new_t->dont_sched != 1){
+    if(new_t->state == RUNNABLE && new_t->waiting_tid == -1){
       mlfqstr.next_t[main_t->pid] = new_t;
       return 0;
     }
     new_t = new_t->t_link;
   }
-  //release(&mlfqstr.lock);
   return -1;
 }
 
@@ -1068,7 +1094,6 @@ acquire_ptable()
     //cprintf("already holding\n");
     return;
   }
-  //cprintf("acquire_ptable\n");
   acquire(&ptable.lock);
 }
 

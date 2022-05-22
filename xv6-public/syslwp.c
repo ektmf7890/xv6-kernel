@@ -46,14 +46,15 @@ int sys_thread_join(void)
   uint addr = curproc->tf->esp + 4;
   uint read_sz = sizeof(thread);
   
-  if(addr >= curproc->sz || addr+read_sz > curproc->sz)
+  if(addr >= curproc->ustack || addr + read_sz > curproc->ustack)
     return -1;
   
   thread = *(thread_t*)(addr);
 
-  addr += sizeof(retval);
+  addr += read_sz;
+  read_sz = 4;
   
-  if(addr >= curproc->sz || addr + read_sz > curproc->sz)
+  if(addr >= curproc->ustack || addr + read_sz > curproc->ustack)
     return -1;
 
   retval = *(void***)(addr);

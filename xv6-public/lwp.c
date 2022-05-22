@@ -6,32 +6,40 @@
 #include "x86.h"
 
 extern void trapret(void);
+extern void forkret(void);
+extern pte_t* walkpgdir(pde_t*, const void*, int);
 
 int thread_create(thread_t* thread, void* (*start_routine) (void*), void* arg)
 {
   struct proc *p;
   struct proc *curproc = myproc();
-  uint sz;
+  //uint sz;
   char* sp;
 
   p = find_unused();
   
   // Could not find an available proc structure
   if(!p){
-    return 1;
+    return -1;
   }
+
+  acquire_ptable();
 
   p->state = EMBRYO;
   p->pid = -1;         // pid=-1 indicates that this is a LWP, not a normal process.
   p->lwpgroup = curproc;
+  p->waiting_tid = -1;
 
-  // Assign scheduling related fields.
   p->timequant = 1;
-  p->level = curproc->level;
+  p->s_link = NULL;
+  p->share = 0;
+  p->stride = -1;
+  p->pass = 0;
 
   // Allocate kernel stack (1page)
-  if((p->kstack = kalloc())==0){
-    return 1;
+  if((p->kstack = kalloc()) == 0){
+    p->state = UNUSED;
+    return -1;
   }
   sp = p->kstack + KSTACKSIZE; // point sp to the top of the kernel stack
   
@@ -39,63 +47,86 @@ int thread_create(thread_t* thread, void* (*start_routine) (void*), void* arg)
   sp -= sizeof *p->tf;
   p->tf = (struct trapframe*)sp;
 
+  sp -= 4;
+  *(uint*)sp = (uint)trapret;
+
   // Build context
   sp -= sizeof *p->context;
   p->context = (struct context*)sp;
+  memset(p->context, 0, sizeof *p->context);
+  p->context->eip = (uint)forkret;
   
-  // Allocate a user stack (2pages -> 1 for stack) 
-  //cprintf("curproc->sz: 0x%x\n", PGROUNDUP(curproc->sz));
-  sz = PGROUNDUP(curproc->sz);
-  if((sz = allocuvm(curproc->pgdir, sz, sz + PGSIZE))==0){
-    return 1; // not enough memory to allocate user stack for thread.
+  // Allocate a page in address space for this thread's ustack
+  /*struct proc* pptr = curproc;
+  pte_t* pte;
+  uint sz;
+  while(pptr){
+    pte = walkpgdir(curproc->pgdir, (char*)pptr->ustack, 0);
+    if(!(*pte & PTE_P)){
+      p->ustack = pptr->ustack + PGSIZE;
+      if((sz = allocuvm(curproc->pgdir, p->ustack - PGSIZE, p->ustack)) == 0){
+        kfree(p->kstack);
+        p->kstack = 0;
+        p->state = UNUSED;
+        return -1;
+      }
+      break;
+    }
+    pptr = pptr->t_link;
   }
+  if(!pptr){
+    cprintf("could not find space for stack\n");
+    return -1;
+  }*/
+  uint sz;
+  p->ustack = curproc->ustack + (curproc->next_tid * PGSIZE);
+  if((sz = allocuvm(curproc->pgdir, p->ustack - PGSIZE, p->ustack)) == 0){
+    kfree(p->kstack);
+    p->kstack = 0;
+    p->state = UNUSED;
+  }
+  //cprintf("allocated ustack for thread %d at %d\n", curproc->thread_count, p->ustack);
   curproc->sz = sz;
-  switchuvm(curproc);
-  //cprintf("increased curproc->sz: 0x%x\n", curproc->sz);
   
-  //clearpteu(curproc->pgdir, (char*)(sz-2*PGSIZE)); // Mark the guard page as inaccessible.
-  sp = (char*)sz; // Make sp point to the newly allocated user stack.
-  //cprintf("bottom of new user stack: 0x%x\n", (int)sp);
+  /*if((sz = allocuvm(curproc->pgdir, sz, sz + PGSIZE))==0){
+    kfree(p->kstack);
+    p->kstack = 0;
+    p->state = UNUSED;
+    return -1; // not enough memory to allocate user stack for thread.
+  }*/
 
-  // Make the new thread use the page table of the main thread.
-  p->pgdir = curproc->pgdir;
-  p->sz = curproc->sz;
+  int i;
+  for(i = 0; i < NOFILE; i++)
+    if(curproc->ofile[i])
+      p->ofile[i] = filedup(curproc->ofile[i]);
+  p->cwd = curproc->cwd;
 
+  safestrcpy(p->name, curproc->name, sizeof(curproc->name));
+  
+  sp = (char*)(p->ustack); // Make sp point to the newly allocated user stack.
   // Push argument value on the new thread's user stack.
   sp = (char*)((uint)(sp - sizeof(arg)) & ~3);
   *(int*)sp = (int)arg;
   
   // Push fake return address
   sp -= 4;
-  //cprintf("top after pushing arg: %x\n", (int)sp);
   int fake_pc = 0xFFFFFFFF;
-  if(copyout(curproc->pgdir, (uint)sp, (void*)(&fake_pc), 4) < 0){
-    cprintf("failed to copyout fake return address\n");
-    return 1; // Failed to write fake return address.
-  }
+  *(int*)sp = fake_pc;
+
+  p->pgdir = curproc->pgdir;
+  p->sz = curproc->sz;
 
   // The new thread will return to trapret, restoring these esp and eip values.
   // eip: start_routine, esp: user stack specific to this thread.
-  memset(p->context, 0, sizeof *p->context);
-  p->context->eip = (uint)trapret;
-
+  
   // Values restored by iret
-  memset(p->tf, 0, sizeof *p->tf);
-  // ss will be left as 0 (not sure if this is ok) -> turns out not ok (read about general protection exception)
-  p->tf->ss = curproc->tf->ss;
+  *p->tf = *curproc->tf;
   p->tf->esp = (uint)sp;
-  // eflags will be all zero.
-  p->tf->cs = curproc->tf->cs;
   p->tf->eip = (uint)start_routine;
-  cprintf("tf->eip: %x\n", p->tf->eip);
+  p->tf->ebp = (uint)p->ustack;
 
-  // Values restored in trapret
-  p->tf->ds = curproc->tf->ds;
-  p->tf->es = curproc->tf->es;
-  p->tf->fs = curproc->tf->fs;
-  p->tf->gs = curproc->tf->gs;
-  // eax, ecx, edx, ebx, oesp, esi, edi will all be zero.
-  p->tf->ebp = (uint)sz;
+  //cprintf("thread's esp value: %d\n", p->tf->esp);
+  //cprintf("return address: %x, arg: %x\n", *(int*)(p->tf->esp), *(int*)(p->tf->esp + 4));
   
   if(curproc->thread_count == 1){
     init_next_t(p, curproc->pid);
@@ -107,41 +138,43 @@ int thread_create(thread_t* thread, void* (*start_routine) (void*), void* arg)
   }
    
   p->thread_id = curproc->next_tid++;
+  
   // Initialize thread_t
   thread->group_id = curproc->pid;
   thread->thread_id = p->thread_id;
   
   curproc->thread_count++;
+ 
   p->state = RUNNABLE;
-
-  cprintf("created thread %d\n", p->thread_id);
+  
+  release_ptable();
   return 0;
 }
 
 void
 thread_exit(void* retval)
 {
-  cprintf("entered exit\n");
   struct proc* p = myproc();
   struct proc* main_thread = p->lwpgroup;
   
   // Set to ZOMBIE status and deallocate in main thread with thread_join.
+  acquire_ptable(); 
   p->state = ZOMBIE;
-  p->tf->eax = (uint)retval;
-
+  p->retval = (int)retval;
+ 
   main_thread->thread_count--;
   rm_thread(p);
   
   // If main thread is waiting in thread_join, wake it up.
-  if(main_thread->dont_sched){
-    main_thread->dont_sched = 0;
+ // if(main_thread->dont_sched){
+   // main_thread->dont_sched = 0;
+  //}
+  if(main_thread->waiting_tid == p->thread_id){
+    main_thread->waiting_tid = -1;
   }
 
-  main_thread->caller_isnt_yield = 1;
-  acquire_ptable();
-  //cprintf("main_thread-> state: %d, level: %d, pid: %d, dont_sched: %d\n", main_thread->state, main_thread->level, main_thread->pid, main_thread->dont_sched);
-  mycpu()->proc = main_thread;
-  swtch(&(p->context), main_thread->context);
+  cprintf("thread %d exit with retval: %d\n", p->thread_id, (int)p->retval);
+  thread_swtch(p, main_thread);
 }
 
 int 
@@ -157,40 +190,32 @@ thread_join(thread_t thread, void** retval)
   
   // Could not find proc structure for this thread.
   if(!p){
-    return 1;
+    return -1;
   }
 
+  acquire_ptable();
   // Fall into sleep if the thread has not exited yet.
   if(p->state != ZOMBIE){
-    //cprintf("p->state!=zombit\n");
-
-    // This process will not be selected in the scheduler
-    // We dont set the status to sleeping because no other thread can be scheduled either if we do that.
-    // This main thread will be scheduled back in when the thread exits.
     curproc->dont_sched = 1;
+    curproc->waiting_tid = tid;
     curproc->state = RUNNABLE;
-    curproc->caller_isnt_yield = 1;
+    release_ptable();
+    yield();
     acquire_ptable();
-    sched();
-    if(is_holding_ptable())
-      release_ptable();
   }
 
-  // If thread has already exited, we save return value and deallocate the process.
   // save ret value
-  *retval = (void*)p->tf->eax;
-//  cprintf("retval: %d\n", *(int*)*retval);
+  *retval = (void*)p->retval;
 
   // deallocate kernel stack of this thread
   kfree(p->kstack);
   p->kstack = 0;
 
   //deallocate user stack of this thread
-  uint sz = curproc->sz;
-  if((sz = deallocuvm(curproc->pgdir, sz, sz - 2*PGSIZE)) == 0)
-    return 1;
-  curproc->sz = sz;
-  switchuvm(curproc);
+  if(deallocuvm(curproc->pgdir, p->ustack, p->ustack-PGSIZE) == 0){
+    cprintf("failed to deallocate stack at thread join\n");
+    return -1;
+  }
   
   p->pid = 0;
   p->lwpgroup = NULL;
@@ -199,7 +224,7 @@ thread_join(thread_t thread, void** retval)
   p->state = UNUSED;
   p->name[0] = 0;
 
-  cprintf("reached end of trap_join\n");
-  //cprintf("curproc->context: %x\n", &curproc->context);
+  release_ptable();
+
   return 0;
 }

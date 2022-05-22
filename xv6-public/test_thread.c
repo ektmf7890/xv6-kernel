@@ -116,8 +116,9 @@ racingtest(void)
     }
   }
   for (i = 0; i < NUM_THREAD; i++){
+  //  printf(1, "&retval:%d\n", &retval);
     if (thread_join(threads[i], &retval) != 0 || (int)retval != i+1){
-      printf(1, "panic at thread_join (tid: %d)\n", i);
+      printf(1, "panic at thread_join (tid: %d), retval: %d\n", i, (int)retval);
       return -1;
     }
   }

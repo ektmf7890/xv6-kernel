@@ -12,6 +12,7 @@
 #define NBUF         (MAXOPBLOCKS*3)  // size of disk block cache
 #define FSSIZE       1000  // size of file system in blocks
 #define STRIDE_DIVIDEND 10000 // large number used to calculate stride in stride scheduling
+#define SET_NT       0x4000
 #ifndef NULL
 #define NULL ((void*)0)
 #endif

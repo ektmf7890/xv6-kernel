@@ -137,7 +137,7 @@ void add_thread(struct proc*);
 int  update_next_t(struct proc*);
 void init_next_t(struct proc*, int);
 int is_holding_ptable();
-void thread_swtch(struct proc*, struct proc*);
+int thread_swtch(struct context**, struct proc*);
 
 // lwp.c
 int             thread_create(thread_t* thread, void* (*start_routine) (void*), void* arg);

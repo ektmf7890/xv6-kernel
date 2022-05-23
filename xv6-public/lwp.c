@@ -29,6 +29,7 @@ int thread_create(thread_t* thread, void* (*start_routine) (void*), void* arg)
   p->pid = -1;         // pid=-1 indicates that this is a LWP, not a normal process.
   p->lwpgroup = curproc;
   p->waiting_tid = -1;
+  p->parent = 0;
 
   p->timequant = 1;
   p->s_link = NULL;
@@ -57,7 +58,7 @@ int thread_create(thread_t* thread, void* (*start_routine) (void*), void* arg)
   p->context->eip = (uint)forkret;
   
   // Allocate a page in address space for this thread's ustack
-  /*struct proc* pptr = curproc;
+  struct proc* pptr = curproc;
   pte_t* pte;
   uint sz;
   while(pptr){
@@ -77,16 +78,17 @@ int thread_create(thread_t* thread, void* (*start_routine) (void*), void* arg)
   if(!pptr){
     cprintf("could not find space for stack\n");
     return -1;
-  }*/
-  uint sz;
+  }
+  /*uint sz;
   p->ustack = curproc->ustack + (curproc->next_tid * PGSIZE);
   if((sz = allocuvm(curproc->pgdir, p->ustack - PGSIZE, p->ustack)) == 0){
     kfree(p->kstack);
     p->kstack = 0;
     p->state = UNUSED;
-  }
+  }*/
   //cprintf("allocated ustack for thread %d at %d\n", curproc->thread_count, p->ustack);
   curproc->sz = sz;
+  switchuvm(curproc);
   
   /*if((sz = allocuvm(curproc->pgdir, sz, sz + PGSIZE))==0){
     kfree(p->kstack);
@@ -166,15 +168,14 @@ thread_exit(void* retval)
   rm_thread(p);
   
   // If main thread is waiting in thread_join, wake it up.
- // if(main_thread->dont_sched){
-   // main_thread->dont_sched = 0;
-  //}
   if(main_thread->waiting_tid == p->thread_id){
     main_thread->waiting_tid = -1;
   }
 
-  cprintf("thread %d exit with retval: %d\n", p->thread_id, (int)p->retval);
-  thread_swtch(p, main_thread);
+//  cprintf("thread %d exit with retval: %d\n", p->thread_id, (int)p->retval);
+  if(thread_swtch(&p->context, main_thread) == -1){
+    sched();
+  }
 }
 
 int 
@@ -196,10 +197,10 @@ thread_join(thread_t thread, void** retval)
   acquire_ptable();
   // Fall into sleep if the thread has not exited yet.
   if(p->state != ZOMBIE){
-    curproc->dont_sched = 1;
     curproc->waiting_tid = tid;
     curproc->state = RUNNABLE;
     release_ptable();
+    //cprintf("calling yield in thread_join tid%d\n", tid);
     yield();
     acquire_ptable();
   }
@@ -211,18 +212,38 @@ thread_join(thread_t thread, void** retval)
   kfree(p->kstack);
   p->kstack = 0;
 
+  uint sz;
   //deallocate user stack of this thread
-  if(deallocuvm(curproc->pgdir, p->ustack, p->ustack-PGSIZE) == 0){
+  if((sz = deallocuvm(curproc->pgdir, p->ustack, p->ustack-PGSIZE)) == 0){
     cprintf("failed to deallocate stack at thread join\n");
     return -1;
   }
+  curproc->sz = sz;
+  switchuvm(curproc);
   
+ /* int fd;
+  // Close all open files.
+  for(fd = 0; fd < NOFILE; fd++){
+    if(p->ofile[fd]){
+      fileclose(p->ofile[fd]);
+      p->ofile[fd] = 0;
+    }
+  }
+
+  begin_op();
+  iput(p->cwd);
+  end_op();
+  p->cwd = 0;
+  */
   p->pid = 0;
   p->lwpgroup = NULL;
   p->thread_id = 0;
   p->killed = 0;
   p->state = UNUSED;
   p->name[0] = 0;
+  p->t_link = 0;
+  p->s_link = 0;
+  p->pgdir = 0;
 
   release_ptable();
 

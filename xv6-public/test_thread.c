@@ -232,6 +232,7 @@ jointest2(void)
 void*
 stressthreadmain(void *arg)
 {
+ // printf(1, "entered stress thread main\n");
   thread_exit(0);
 
   return 0;

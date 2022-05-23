@@ -171,8 +171,15 @@ thread_exit(void* retval)
   if(main_thread->waiting_tid == p->thread_id){
     main_thread->waiting_tid = -1;
   }
+  
+  uint sz;
+  //deallocate user stack of this thread
+  if((sz = deallocuvm(main_thread->pgdir, p->ustack, p->ustack-PGSIZE)) == 0){
+    cprintf("failed to deallocate ustack at thread exit\n");
+  }
+  main_thread->sz = sz;
 
-//  cprintf("thread %d exit with retval: %d\n", p->thread_id, (int)p->retval);
+  //cprintf("thread %d exit with retval: %d\n", p->thread_id, (int)p->retval);
   if(thread_swtch(&p->context, main_thread) == -1){
     sched();
   }
@@ -212,14 +219,6 @@ thread_join(thread_t thread, void** retval)
   kfree(p->kstack);
   p->kstack = 0;
 
-  uint sz;
-  //deallocate user stack of this thread
-  if((sz = deallocuvm(curproc->pgdir, p->ustack, p->ustack-PGSIZE)) == 0){
-    cprintf("failed to deallocate stack at thread join\n");
-    return -1;
-  }
-  curproc->sz = sz;
-  switchuvm(curproc);
   
  /* int fd;
   // Close all open files.

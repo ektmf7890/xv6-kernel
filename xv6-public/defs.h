@@ -2,6 +2,12 @@
 #define LWP_H
 #include "lwp.h"
 #endif
+
+#ifndef SEMAPHORE_H
+#define SEMAPHORE_H
+#include "semaphore.h"
+#endif
+
 struct buf;
 struct context;
 struct file;
@@ -13,7 +19,8 @@ struct spinlock;
 struct sleeplock;
 struct stat;
 struct superblock;
-//typedef struct _thread_t thread_t;
+
+// semaphore.c
 
 // bio.c
 void            binit(void);

@@ -126,6 +126,7 @@ mycpu(void)
     panic("mycpu called with interrupts enabled\n");
   
   apicid = lapicid();
+
   // APIC IDs are not guaranteed to be contiguous. Maybe we should have
   // a reverse map, or reserve a register to store &cpus[i].
   for (i = 0; i < ncpu; ++i) {
@@ -536,27 +537,6 @@ contextswitch:
       switchkvm();
       c->proc = 0;
       goto norunnable;
-      /*newproc = mlfqstr.next_t[newproc->pid];
-      update_next_t(newproc);
-      if(!newproc){
-        goto norunnable;
-      }
-      else{
-        thread_swtch();
-        switchkvm();
-        c->proc = 0;
-        goto norunnable;
-      }*/
-      
-      // if the scheduled process is a main_thread that is waiting in thread_join,
-      // we schedule in a different thread from the lwp group.
-      /*if(newproc->waiting_tid != -1 || newproc->state != RUNNABLE){
-        newproc = mlfqstr.next_t[newproc->pid];
-        if(update_next_t(newproc->lwpgroup) != 0){
-          goto norunnable;
-        }
-      }*/
-
     }
 
     c->proc = newproc;
@@ -662,9 +642,16 @@ thread_swtch(struct context** old_context, struct proc* main_thread)
     update_next_t(main_thread);
   }*/
 
+  if(next_t == myproc()){
+    //cprintf("trying to switch to itself, tid:%d\n", myproc()->thread_id);
+    myproc()->state = RUNNING;
+    return 0;
+  }
+
   mycpu()->proc = next_t;
   switchuvm(next_t);
   next_t->state = RUNNING;
+  //cprintf("thread switch to tid %d\n", next_t->thread_id);
   swtch(old_context, next_t->context);
   return 0;
 }
@@ -673,6 +660,9 @@ thread_swtch(struct context** old_context, struct proc* main_thread)
 int
 yield(void)
 {
+  /*if(myproc()->lwpgroup->thread_count > 1){
+    cprintf("thread %d yield\n", myproc()->thread_id);
+  }*/
   acquire(&ptable.lock);  //DOC: yieldlock
 
   struct proc* curproc = myproc();
@@ -681,6 +671,8 @@ yield(void)
   uint tickcount = main_thread->tickcount++;
   uint level = main_thread->level;
   uint timeallot = main_thread->timeallot;
+  
+  curproc->state = RUNNABLE;
 
   // Check if this process has used up its time allotment
   // We skip this part for stride processes (their level values are -1)
@@ -716,34 +708,15 @@ yield(void)
   // we choose the next thread to run here and context switch.
   // We do not context switch through the scheduler.
   if(main_thread->thread_count > 1){
-    //struct proc* next_t = mlfqstr.next_t[main_thread->pid];
-    //update_next_t(main_thread);
-    
-    curproc->state = RUNNABLE;
+    //procdump();
     if(thread_swtch(&curproc->context, main_thread) == -1){
       sched();
     }
-
-   // cprintf("switching to thread- pid:%d, tid:%d\n", main_thread->pid, next_t->thread_id);
-
-    //mycpu()->proc = next_t;
-    //switchuvm(next_t);
-    //next_t->state = RUNNING;
-
-   // if(next_t->caller_isnt_yield){
-     // release(&ptable.lock);
-   // }
-
-    //swtch(&(curproc->context), next_t->context);
-    //mycpu()->intena = intena;
-
-   // cprintf("switching back to thread - pid:%d, tid: %d\n", main_thread->pid, curproc->thread_id);
   }
-  
+
   // Do not call scheduler if it hasn't used up its time quantum
   // Processes in stride queue will always call the scheduler because their time quantum is 1.
   else if(lowered || tickcount % main_thread->timequant == 0){
-    curproc->state = RUNNABLE;
     sched();
   }
 
@@ -805,6 +778,10 @@ sleep(void *chan, struct spinlock *lk)
     release(&mlfqstr.lock);
   }
 
+  /*if(p->pid == -1){
+    cprintf("thread %d sleep\n", p->thread_id);
+  }*/
+
   sched();
 
   // Tidy up.
@@ -812,9 +789,21 @@ sleep(void *chan, struct spinlock *lk)
 
   // Reacquire original lock.
   if(lk != &ptable.lock){  //DOC: sleeplock2
-    //cprintf("sleep\n");
     release(&ptable.lock);
     acquire(lk);
+  }
+}
+
+void 
+wakeup_one(void* chan)
+{
+  struct proc *p;
+
+  for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+    if(p->state == SLEEPING && p->chan == chan){
+      p->state = RUNNABLE;
+      break;
+    }
   }
 }
 
@@ -1045,7 +1034,6 @@ update_next_t(struct proc* main_t)
   struct proc* new_t;
 
   if(!old_t){
-    //cprintf("old_t is null\n");
     old_t = main_t;
   }
 
@@ -1054,10 +1042,6 @@ update_next_t(struct proc* main_t)
   }
   else{
     new_t = old_t->t_link;
-  }
-
-  if(!new_t){
-    cprintf("new_t is null\n");
   }
 
   // when we search one full cycle and still couldnt find a runnable thread,

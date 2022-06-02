@@ -1,11 +1,31 @@
-#ifndef LWP_H
-#define LWP_H
-#include "lwp.h"
-#endif
-
 struct stat;
 struct rtcdate;
-//iitypedef struct _thread_t thread_t;
+
+struct spinlock {
+  uint locked;       // Is the lock held?
+  // For debugging:
+  char *name;        // Name of lock.
+  struct cpu *cpu;   // The cpu holding the lock.
+  uint pcs[10];      // The call stack (an array of program counters)
+                     // that locked the lock.
+};
+
+typedef struct _thread_t{
+  int thread_id;
+  int group_id;
+}thread_t;
+
+typedef struct __my_sem_t{
+  int value;
+  int chan;
+  struct spinlock lock;
+}xem_t;
+
+typedef struct __my_rwlock_t{
+  xem_t lock;
+  xem_t writelock;
+  int readers;
+}rwlock_t;
 
 // system calls
 int fork(void);
@@ -51,3 +71,15 @@ void* memset(void*, int, uint);
 void* malloc(uint);
 void free(void*);
 int atoi(const char*);
+
+// semaphore.c
+int xem_init(xem_t*);
+int xem_wait(xem_t*);
+int xem_post(xem_t*);
+
+// rwlock.c
+int rwlock_init(rwlock_t*);
+int rwlock_acquire_readlock(rwlock_t*);
+int rwlock_acquire_writelock(rwlock_t*);
+int rwlock_release_readlock(rwlock_t*);
+int rwlock_release_writelock(rwlock_t*);

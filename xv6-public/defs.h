@@ -1,13 +1,3 @@
-#ifndef LWP_H
-#define LWP_H
-#include "lwp.h"
-#endif
-
-#ifndef SEMAPHORE_H
-#define SEMAPHORE_H
-#include "semaphore.h"
-#endif
-
 struct buf;
 struct context;
 struct file;
@@ -15,12 +5,49 @@ struct inode;
 struct pipe;
 struct proc;
 struct rtcdate;
-struct spinlock;
+//struct spinlock;
 struct sleeplock;
 struct stat;
 struct superblock;
 
+struct spinlock {
+  uint locked;       // Is the lock held?
+
+  // For debugging:
+  char *name;        // Name of lock.
+  struct cpu *cpu;   // The cpu holding the lock.
+  uint pcs[10];      // The call stack (an array of program counters)
+                     // that locked the lock.
+};
+
+typedef struct _thread_t{
+  int thread_id;
+  int group_id;
+}thread_t;
+
+typedef struct __my_sem_t{
+  int value;
+  int chan;
+  struct spinlock lock;
+}xem_t;
+
+typedef struct __my_rwlock_t{
+  xem_t lock;
+  xem_t writelock;
+  int readers;
+}rwlock_t;
+
 // semaphore.c
+int xem_init(xem_t*);
+int xem_wait(xem_t*);
+int xem_post(xem_t*);
+
+// rwlock.c
+int rwlock_init(rwlock_t*);
+int rwlock_acquire_readlock(rwlock_t*);
+int rwlock_acquire_writelock(rwlock_t*);
+int rwlock_release_readlock(rwlock_t*);
+int rwlock_release_writelock(rwlock_t*);
 
 // bio.c
 void            binit(void);
@@ -115,6 +142,7 @@ int             pipewrite(struct pipe*, char*, int);
 
 //PAGEBREAK: 16
 // proc.c
+void wakeup_one(void*);
 int             cpuid(void);
 void            exit(void);
 int             fork(void);

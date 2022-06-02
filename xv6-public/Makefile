@@ -30,7 +30,10 @@ OBJS = \
 	vm.o\
 	prac_syscall.o\
   lwp.o\
-#  lwp_swtch.o\
+  rwlock.o\
+  semaphore.o\
+  syssemaphore.o\
+  sysrwlock.o\
 
 # Cross-compiling (e.g., on Mac OS X)
 # TOOLPREFIX = i386-jos-elf
@@ -191,6 +194,7 @@ UPROGS=\
   _test_scheduler\
   _test_thread\
   _test_thread2\
+  _test_rwlock\
 
 fs.img: mkfs README $(UPROGS)
 	./mkfs fs.img README $(UPROGS)
@@ -261,6 +265,7 @@ EXTRA=\
 	mkfs.c ulib.c user.h cat.c echo.c forktest.c grep.c kill.c\
 	ln.c ls.c mkdir.c rm.c stressfs.c usertests.c wc.c zombie.c test_shceduler.c\
 	printf.c umalloc.c my_userapp.c test.c test_yield.c test_thread.c test_thread2.c\
+  test_rwlock.c\
 	README dot-bochsrc *.pl toc.* runoff runoff1 runoff.list\
 	.gdbinit.tmpl gdbutil\
 

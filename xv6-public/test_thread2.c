@@ -3,7 +3,7 @@
 #include "user.h"
 
 #define NUM_THREAD 10
-#define NTEST 14
+#define NTEST 1
 
 // Show race condition
 int racingtest(void);
@@ -45,7 +45,7 @@ volatile int gcnt;
 int gpipe[2];
 
 int (*testfunc[NTEST])(void) = {
-  racingtest,
+  /*racingtest,
   basictest,
   jointest1,
   jointest2,
@@ -56,12 +56,12 @@ int (*testfunc[NTEST])(void) = {
   exectest,
   sbrktest,
   killtest,
-  pipetest,
+  pipetest,*/
   sleeptest,
-  stridetest,
+  //stridetest,
 };
 char *testname[NTEST] = {
-  "racingtest",
+  /*"racingtest",
   "basictest",
   "jointest1",
   "jointest2",
@@ -72,9 +72,9 @@ char *testname[NTEST] = {
   "exectest",
   "sbrktest",
   "killtest",
-  "pipetest",
+  "pipetest",*/
   "sleeptest",
-  "stridetest",
+  //"stridetest",
 };
 
 int

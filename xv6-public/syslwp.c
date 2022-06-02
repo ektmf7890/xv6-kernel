@@ -14,7 +14,7 @@ sys_thread_create(void)
   void* (*start_routine) (void*);
   void* arg;
 
-  if(argptr(0, (char**)&thread, sizeof(thread) < 0))
+  if(argptr(0, (char**)&thread, sizeof(thread)) < 0)
     return -1;
   if(argptr(1, (char**)&start_routine, 4) < 0)
     return -1;

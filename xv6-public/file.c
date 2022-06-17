@@ -106,7 +106,6 @@ fileread(struct file *f, char *addr, int n)
     ilock(f->ip);
     if((r = readi(f->ip, addr, f->off, n)) > 0){
       f->off += r;
-//      cprintf("read %d blocks\n", f->off/512);
     }
     iunlock(f->ip);
     return r;
@@ -134,15 +133,11 @@ filewrite(struct file *f, char *addr, int n)
     // might be writing a device like the console.
     int max = ((MAXOPBLOCKS-1-1-2) / 2) * 512;
     int i = 0;
-    int total = 0;
     while(i < n){
       int n1 = n - i;
       if(n1 > max)
         n1 = max;
 
-      total += n1/512;
-      //cprintf("written blocks: %d\n", total);
-      
       begin_op();
       ilock(f->ip);
       if ((r = writei(f->ip, addr + i, f->off, n1)) > 0)
@@ -161,3 +156,55 @@ filewrite(struct file *f, char *addr, int n)
   panic("filewrite");
 }
 
+int
+pos_write(struct file* f, char* addr, int n, int off)
+{
+  int r;
+
+  if(f->writable == 0)
+    return -1;
+  if(f->type == FD_PIPE)
+    return -1;
+  if(f->type == FD_INODE){
+    int max = ((MAXOPBLOCKS-1-1-2) / 2) * 512;
+    int i = 0;
+    while(i < n){
+      int n1 = n - i;
+      if(n1 > max)
+        n1 = max;
+
+      begin_op();
+      ilock(f->ip);
+      r = writei(f->ip, addr + i, off + i, n1);
+      iunlock(f->ip);
+      end_op();
+
+      if(r < 0)
+        break;
+      if(r != n1)
+        panic("short pos write\n");
+
+      i += r;
+    }
+    return i == n? n : -1;
+  }
+  panic("pos_write");
+}
+
+int 
+pos_read(struct file* f, char* addr, int n, int off)
+{
+  int r;
+
+  if(f->readable == 0)
+    return -1;
+  if(f->type == FD_PIPE)
+    return -1;
+  if(f->type == FD_INODE){
+    ilock(f->ip);
+    r = readi(f->ip, addr, off, n);
+    iunlock(f->ip);
+    return r;
+  }
+  panic("pos_read");
+}

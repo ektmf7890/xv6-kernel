@@ -4,7 +4,10 @@
 #include "fcntl.h"
 
 #define NUM_TEST 2
-#define BUFF_SIZE 4096
+#define BUFF_SIZE 100
+
+uint src_string_len;
+char* buff;
 
 int preadtest(void);
 int pwritetest(void);
@@ -17,8 +20,8 @@ int (*testfunc[NUM_TEST]) (void) = {
 };
 
 char* testname[NUM_TEST] = {
-  "pread test",
   "pwrite test",
+  "pread test",
 };
 
 int f_cnt;
@@ -55,7 +58,8 @@ int main(int argc, char* argv[])
       write(gpipe[1], (char*)&ret, sizeof(ret));
       close(gpipe[1]);
       exit();
-    } else{
+    } 
+    else{
       close(gpipe[1]);
       if (wait() == -1 || read(gpipe[0], (char*)&ret, sizeof(ret)) == -1 || ret != 0){
         printf(1,"%d. %s panic\n", i, testname[i]);
@@ -69,7 +73,6 @@ int main(int argc, char* argv[])
   exit();
 }
 
-uint src_string_len = 0;
 
 int 
 pwritetest(void)
@@ -90,10 +93,11 @@ pwritetest(void)
   src = "Good morning. I am DY.\n";
   n = strlen(src);
   src_string_len = n;
+  printf(1, "src: %d\n", src_string_len);
   off = 10;
   
   if((w = pwrite(fd, src, n, off)) < 0){
-    printf("pwrite error\n");
+    printf(1, "pwrite error\n");
     return -1;
   }
 
@@ -105,8 +109,8 @@ pwritetest(void)
 int 
 preadtest(void)
 {
-  int fd, n, r, off;
-  char buff[BUFF_SIZE];
+  int fd, r, off;
+  buff = (char*)malloc(BUFF_SIZE);
 
   if((fd = open("prw_testfile", O_RDONLY)) < 0){
     printf(1, "pwrite test panic: failed to open file\n");
@@ -114,8 +118,9 @@ preadtest(void)
   }
 
   off = 10;
-  if((r = pread(fd, buff, src_string_len, off)) < 0){
-    printf("pread error\n");
+  printf(1, "src_string_len:%d\n", src_string_len);
+  if((r = pread(fd, buff, 23, off)) < 0){
+    printf(1, "pread error\n");
     return -1;
   }
 

@@ -72,6 +72,8 @@ void            fileinit(void);
 int             fileread(struct file*, char*, int n);
 int             filestat(struct file*, struct stat*);
 int             filewrite(struct file*, char*, int n);
+int             pos_write(struct file*, char*, int, int);
+int             pos_read(struct file*, char*, int, int);
 
 // fs.c
 void            readsb(int dev, struct superblock *sb);

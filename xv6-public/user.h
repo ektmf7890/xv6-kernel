@@ -57,6 +57,8 @@ int set_cpu_share(int);
 int thread_create(thread_t* thread, void* (*start_rotine) (void*), void* arg);
 void thread_exit(void* retval);
 int thread_join(thread_t thread, void** retval);
+int pwrite(int, void*, int, int);
+int pread(int, void*, int, int);
 
 // ulib.c
 int stat(const char*, struct stat*);

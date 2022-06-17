@@ -119,7 +119,8 @@ extern int sys_rwlock_acquire_readlock(void);
 extern int sys_rwlock_release_readlock(void);
 extern int sys_rwlock_acquire_writelock(void);
 extern int sys_rwlock_release_writelock(void);
-
+extern int sys_pread(void);
+extern int sys_pwrite(void);
 
 static int (*syscalls[])(void) = {
 [SYS_fork]    sys_fork,
@@ -159,6 +160,8 @@ static int (*syscalls[])(void) = {
 [SYS_rwlock_acquire_writelock] sys_rwlock_acquire_writelock,
 [SYS_rwlock_release_readlock] sys_rwlock_release_readlock,
 [SYS_rwlock_release_writelock] sys_rwlock_release_writelock,
+[SYS_pwrite] sys_pwrite,
+[SYS_pread] sys_pread,
 };
 
 void

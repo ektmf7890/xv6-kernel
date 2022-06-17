@@ -301,7 +301,8 @@ sys_open(void)
       end_op();
       return -1;
     }
-  } else {
+  } 
+  else {
     if((ip = namei(path)) == 0){
       end_op();
       return -1;

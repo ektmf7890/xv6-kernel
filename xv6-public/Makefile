@@ -195,6 +195,7 @@ UPROGS=\
   _test_thread\
   _test_thread2\
   _test_rwlock\
+  _test_largefile\
 
 fs.img: mkfs README $(UPROGS)
 	./mkfs fs.img README $(UPROGS)

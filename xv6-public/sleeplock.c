@@ -10,6 +10,8 @@
 #include "spinlock.h"
 #include "sleeplock.h"
 
+extern int debug; 
+
 void
 initsleeplock(struct sleeplock *lk, char *name)
 {
@@ -24,6 +26,7 @@ acquiresleep(struct sleeplock *lk)
 {
   acquire(&lk->lk);
   while (lk->locked) {
+    cprintf("sleep wait for buffer lock\n");
     sleep(lk, &lk->lk);
   }
   lk->locked = 1;

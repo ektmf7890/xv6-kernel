@@ -384,8 +384,10 @@ bmap(struct inode *ip, uint bn)
 
   if(bn < NINDIRECT){
     // Load indirect block, allocating if necessary.
-    if((addr = ip->addrs[NDIRECT]) == 0)
+    if((addr = ip->addrs[NDIRECT]) == 0){
       ip->addrs[NDIRECT] = addr = balloc(ip->dev);
+    }
+
     bp = bread(ip->dev, addr);
     a = (uint*)bp->data;
     if((addr = a[bn]) == 0){
@@ -393,6 +395,72 @@ bmap(struct inode *ip, uint bn)
       log_write(bp);
     }
     brelse(bp);
+    return addr;
+  }
+  bn -= NINDIRECT;
+
+  if(bn < NDINDIRECT){
+    // Loading Double Indirection Block
+    if((addr = ip->addrs[NDIRECT + 1]) == 0){
+      ip->addrs[NDIRECT + 1] = addr = balloc(ip->dev);
+    }
+    
+    // Loading Indirection Block
+    bp = bread(ip->dev, addr);
+    a = (uint*)bp->data;
+    if((addr = a[bn / 128]) == 0){
+      a[bn / 128] = addr = balloc(ip->dev);
+      log_write(bp);
+    }
+    brelse(bp);
+
+    // Loading final block address
+    bp = bread(ip->dev, addr);
+    a = (uint*)bp->data;
+    if((addr = a[bn % 128]) == 0){
+      a[bn % 128] = addr = balloc(ip->dev);
+      log_write(bp);
+    }
+    brelse(bp);
+    
+    return addr;
+  }
+  bn -= NDINDIRECT;
+
+  if(bn < NTINDIRECT){
+    // Loading Triple Indirection Block
+    if((addr = ip->addrs[NDIRECT + 2]) == 0){
+      ip->addrs[NDIRECT + 2] = addr = balloc(ip->dev);
+    }
+
+    // Loading Double indirection Block
+    bp = bread(ip->dev, addr);
+    a = (uint*)bp->data;
+    if((addr = a[bn / (128*128)]) == 0){
+      a[bn / (128*128)] = addr = balloc(ip->dev);
+      log_write(bp);
+    }
+    brelse(bp);
+
+    // Loading Indirection Block
+    bp = bread(ip->dev, addr);
+    a = (uint*)bp->data;
+    if((addr = a[(bn % (128*128))/ 128]) == 0){
+      a[(bn % (128*128)) / 128] = addr = balloc(ip->dev);
+      log_write(bp);
+    }
+    brelse(bp);
+
+    // Loading Block Address
+    bp = bread(ip->dev, addr);
+    a = (uint*)bp->data;
+    if((addr = a[(bn % (128*128)) % 128]) == 0){
+      a[(bn % (128*128)) % 128] = addr = balloc(ip->dev);
+      //cprintf("(triple indirect) allocated block at %d\n", addr);
+      log_write(bp);
+    }
+    brelse(bp);
+
     return addr;
   }
 
@@ -407,9 +475,9 @@ bmap(struct inode *ip, uint bn)
 static void
 itrunc(struct inode *ip)
 {
-  int i, j;
-  struct buf *bp;
-  uint *a;
+  int i, j, k, l;
+  struct buf *bp, *bp2, *bp3;
+  uint *a, *a2, *a3;
 
   for(i = 0; i < NDIRECT; i++){
     if(ip->addrs[i]){
@@ -418,16 +486,89 @@ itrunc(struct inode *ip)
     }
   }
 
+  // Deallocate 128 indirect blocks.
   if(ip->addrs[NDIRECT]){
     bp = bread(ip->dev, ip->addrs[NDIRECT]);
     a = (uint*)bp->data;
-    for(j = 0; j < NINDIRECT; j++){
+    for(j = 0; j < 128; j++){
       if(a[j])
         bfree(ip->dev, a[j]);
     }
     brelse(bp);
+
+    // Deallocate indirect block.
     bfree(ip->dev, ip->addrs[NDIRECT]);
     ip->addrs[NDIRECT] = 0;
+  }
+
+  // Deallocate 128*128 double indirect blocks.
+  if(ip->addrs[NDIRECT + 1]){
+    // bp, a: Double Indirection Block
+    bp = bread(ip->dev, ip->addrs[NDIRECT + 1]);
+    a = (uint*)bp->data;
+    for(j = 0; j < 128; j++){
+      if(a[j]){
+        // bp2, a2: Indirection Block
+        bp2 = bread(ip->dev, a[j]);
+        a2 = (uint*)bp2->data;
+        for(k=0; k < 128; k++){
+          if(a2[k])
+            bfree(ip->dev, a2[k]);
+        }
+        brelse(bp2);
+
+        // Deallocate Indirection Block
+        bfree(ip->dev, a[j]);
+      }
+    }
+    brelse(bp);
+
+    // Deallocate double indirect block.
+    bfree(ip->dev, ip->addrs[NDIRECT + 1]);
+    ip->addrs[NDIRECT + 1] = 0;
+  }
+
+  // Deallocate 128*128*128 triple indirect blocks.
+  if(ip->addrs[NDIRECT + 2]){
+    // bp, a: Triple Indirection Block
+    bp = bread(ip->dev, ip->addrs[NDIRECT + 2]);
+    a = (uint*)bp->data;
+
+    for(j = 0; j < 128; j++){
+      if(a[j]){
+        // bp2, a2: Double Indirection Block
+        bp2 = bread(ip->dev, a[j]);
+        a2 = (uint*)bp2->data;
+  
+        for(k=0; k < 128; k++){
+          if(a2[k]){
+            // bp3, a3: Indirection Block
+            bp3 = bread(ip->dev, a2[k]);
+            a3 = (uint*)bp3->data;
+            
+            for(l=0; l<128; l++){
+              if(a3[l])
+                bfree(ip->dev, a3[l]);
+            }
+
+            brelse(bp3);
+
+            // Deallocate Indirection Block
+            bfree(ip->dev, a2[k]);
+          }
+        }
+
+        brelse(bp2);
+
+        // Deallocate Double Indirection Block
+        bfree(ip->dev, a[j]);
+      }
+    }
+    brelse(bp);
+
+    // Deallocate Triple Indirection Block.
+    bfree(ip->dev, ip->addrs[NDIRECT + 2]);
+    ip->addrs[NDIRECT + 2] = 0;
   }
 
   ip->size = 0;

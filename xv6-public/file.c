@@ -104,8 +104,10 @@ fileread(struct file *f, char *addr, int n)
     return piperead(f->pipe, addr, n);
   if(f->type == FD_INODE){
     ilock(f->ip);
-    if((r = readi(f->ip, addr, f->off, n)) > 0)
+    if((r = readi(f->ip, addr, f->off, n)) > 0){
       f->off += r;
+//      cprintf("read %d blocks\n", f->off/512);
+    }
     iunlock(f->ip);
     return r;
   }
@@ -132,11 +134,15 @@ filewrite(struct file *f, char *addr, int n)
     // might be writing a device like the console.
     int max = ((MAXOPBLOCKS-1-1-2) / 2) * 512;
     int i = 0;
+    int total = 0;
     while(i < n){
       int n1 = n - i;
       if(n1 > max)
         n1 = max;
 
+      total += n1/512;
+      //cprintf("written blocks: %d\n", total);
+      
       begin_op();
       ilock(f->ip);
       if ((r = writei(f->ip, addr + i, f->off, n1)) > 0)

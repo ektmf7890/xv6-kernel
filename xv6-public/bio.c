@@ -35,6 +35,8 @@ struct {
   struct buf head;
 } bcache;
 
+extern int debug;
+
 void
 binit(void)
 {

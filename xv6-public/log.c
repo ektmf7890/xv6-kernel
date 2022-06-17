@@ -47,6 +47,8 @@ struct log {
 };
 struct log log;
 
+int debug = 0;
+
 static void recover_from_log(void);
 static void commit();
 
@@ -178,6 +180,11 @@ static void
 write_log(void)
 {
   int tail;
+
+  /*cprintf("blocks to write to log: ");
+  for(int i=0; i<log.lh.n; i++)
+    cprintf("%d, ", log.lh.block[i]);
+  cprintf("\n");*/
 
   for (tail = 0; tail < log.lh.n; tail++) {
     struct buf *to = bread(log.dev, log.start+tail+1); // log block

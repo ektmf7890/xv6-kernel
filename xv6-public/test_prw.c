@@ -6,7 +6,7 @@
 #define NUM_TEST 2
 #define BUFF_SIZE 100
 
-uint src_string_len;
+int n = 0;
 char* buff;
 
 int preadtest(void);
@@ -61,10 +61,11 @@ int main(int argc, char* argv[])
     } 
     else{
       close(gpipe[1]);
-      if (wait() == -1 || read(gpipe[0], (char*)&ret, sizeof(ret)) == -1 || ret != 0){
+      if (wait() == -1 || read(gpipe[0], (char*)&ret, sizeof(ret)) == -1){
         printf(1,"%d. %s panic\n", i, testname[i]);
         exit();
       }
+      n = ret;
       close(gpipe[0]);
     }
     printf(1,"%d. %s finish\n", i, testname[i]);
@@ -92,8 +93,6 @@ pwritetest(void)
 
   src = "Good morning. I am DY.\n";
   n = strlen(src);
-  src_string_len = n;
-  printf(1, "src: %d\n", src_string_len);
   off = 10;
   
   if((w = pwrite(fd, src, n, off)) < 0){
@@ -103,7 +102,7 @@ pwritetest(void)
 
   close(fd);
 
-  return 0;
+  return n;
 }
 
 int 
@@ -118,8 +117,7 @@ preadtest(void)
   }
 
   off = 10;
-  printf(1, "src_string_len:%d\n", src_string_len);
-  if((r = pread(fd, buff, 23, off)) < 0){
+  if((r = pread(fd, buff, n, off)) < 0){
     printf(1, "pread error\n");
     return -1;
   }

@@ -108,7 +108,7 @@ itrunc is the API for deallocating all the blocks held by an inode. We make sure
 - read test: reads from the file created in create test. 
 - stress test: creates 16MB file -> reads file -> removes file => repeat 4 times
 
-![image](uploads/cbc9e4514c552cac401869e10ab58239/image.png)
+![image](uploads/thread/image7.png)
 
 # Pread, Pwrite
 While read and write system calls reference the offset value of the file descriptor and starts reading/writing from there, pread and pwrite takes in the offset from users and does not update or reference the offset values of the file. 
@@ -149,7 +149,3 @@ While read and write system calls reference the offset value of the file descrip
 
   printf(1, "Retrieved string: %s", buff);
   ```
-
-![image](uploads/40bfe842aa77d332ceb780184905c860/image.png)
-
-# Thread Safe Pread, Pwrite

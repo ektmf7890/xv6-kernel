@@ -133,12 +133,12 @@ xem_post(&rwlock->lock);
 xem_post(&rwlock->writelock);
 ```
 
-# Test Result ([test_rwlock.c](https://hconnect.hanyang.ac.kr/2022_ele3021_13024/2022_ele3021_2019073027/-/blob/master/xv6-public/test_rwlock.c))
+# Test Result ([test_rwlock.c](https://github.com/ektmf7890/xv6-kernel/blob/master/xv6-public/test_rwlock.c)
 ### Binary Semaphore Correctness Test
 - Increments a global counter.
 - 10 threads concurrently access the global counter, incrementing it 10,000,000 times. Therefore, the final counter value must be 100,000,000 if the binary semaphore successes to protect the critical section.
 
-  ![image](uploads/8357ec15ae915383142a3dfe88986a31/image.png)
+  ![image](uploads/thread/img4.png)
 
 ### Readers-Writer Lock Correctness Test
 - Declare shared variable **volatile int buff[10000]**. (volatile: to make sure the code always performs memory access)
@@ -155,9 +155,9 @@ xem_post(&rwlock->writelock);
 
 - When not using any locks.  
 
-  ![image](uploads/1e4359d52ab39938f97e404e243aee9d/image.png)
+  ![image](uploads/thread/img5.png)
 
 - When using Readers-Writer lock for the same workload.  
 
-  ![image](uploads/e319614c2a2c7e9dbe6d5a9df33a4bc9/image.png)  
+  ![image](uploads/thread/img6.png)  
 

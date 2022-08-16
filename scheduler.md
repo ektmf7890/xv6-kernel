@@ -26,7 +26,7 @@ Time allotment checking, priority boosting, and time quantum checking will all b
 # Implementation
 ## New proc structure with additional fields
 The new process control block contains information needed for mlfq and stride scheduling.  
-<img src="uploads/fcc01452b983a53f6e5876e4bc217cc3/image.png" width=70%/>
+<img src="uploads/scheduler/image1.png" width=70%/>
 
 - **level**   
   The mlfq level 0~2. If a process calls set_cpu_share successfully, level is set to -1 to indicate it is in the stride queue. 
@@ -50,7 +50,7 @@ The new process control block contains information needed for mlfq and stride sc
   This is a pointer to a different proc strucuture. This is needed for implementing a linked list of stride processes (process that validly called set_cpu_share at least once). This list will be used in the scheduler to find the process with the smallest pass value. The linked list can be accessed through the stride_head poiter in the global mlfqstr structure. A process is added to the linked list if a call to set_cpu_share is successful, and deleted from the linked list when it exits. Keeping this list prevents having to loop through the entire process tables mutiple times when scheduling.
   
 ## Protected data for scheduling tasks
-![image](uploads/a0897ce67ce3f5fee8c864a78f0c07a9/image.png)  
+![image](uploads/scheduler/image2.png)  
 <!--There are many data related to the scheduling process that has to be maintained, and I collected them into a global data structure and made sure a race condition doesn't occur by protecting it with a lock. Time stamps that record when a priority boost has occured is used in the yield function to determine if it is time to perform another priority boost. Also, we manintain an array that stores how many processes are currently running in each mlfq level. We need this information to know which mlfq levels are empty, so we can choose the correct mlfq level to select from. We also maintain stride scheduling related data such as the stride and pass value of mlfq processes and a pointer to a linked list of processes in the stride queue. We also maintain a seperate field that stores the number of runnable processes currenlty in the mlfq. This is to avoid calculating qlevels[2] + qlevels[1] + qlevels[0] at every scheduler execution. Finally, stride_share that holds the sum of CPU share all the processes in the stride queue is used. -->
 
 - **priboosttime**  
@@ -317,7 +317,7 @@ At time 21, MLFQ is selected to run and it chooses process a in level1. It runs 
 
 # Current State
 ### 2 MLFQ processes, 1 Stride(5%), 1 Stride 15%  
-![image](uploads/b7ee3cddf42ed155a437fdd2cb3b4560/image.png)
+![image](uploads/scheduler/image3.png)
   
 |Process|CPU Usage|Formula|
 |----|----|----|
@@ -326,7 +326,7 @@ At time 21, MLFQ is selected to run and it chooses process a in level1. It runs 
 |Stride 15%|15.27%|64422/total|
 
 ### 2 MLFQ process, 2 Stride 25%  
-![image](uploads/8bab2cbd34f0d8fd10c89a47a0c5efd9/image.png)  
+![image](uploads/scheduler/image4.png)  
   
 |Process|CPU Usage|
 |----|----|

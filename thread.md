@@ -35,7 +35,7 @@
 - **uint ustack**  
   Base address of the stack page allocated for a thread in the main thread's address space
 
-  ![image](uploads/fecaf6b8596e9f1eda2a670eed2fa12e/image.png)
+  ![image](uploads/thread/img1.png)
 
 - **int waiting_tid**  
   When the process is a main thread waiting for a certain thread to exit, it will set its waiting_tid field to the thread's thread id. When a thread exits, it will check if its main thread's waiting_tid is set to itself and reset it to -1.
@@ -63,7 +63,7 @@
 
 ## mlfqstr struct added features 
 
-  ![image](uploads/dcb183ad9fd2af4e18eb52009e6f8069/image.png)
+  ![image](uploads/thread/img2.png)
 
 - **struct proc\* next_t[NPROC]**  
   If process pid3 created 10 threads, we have to alternate between the 10 threads. Each thread should get to run for 1 tick at a time. To do this, we keep an array of struct proc pointers. The threads within the lwp group created by process pid3, will use next_t[3] as a pointer that indicates which thread gets to run in the next round. next_t[3] will be updated when a threads switch between each other in thread_swtch. Thread switch occurs in either yield, scheduler or thread_exit. 
@@ -208,7 +208,7 @@ If process pid3 created 10 threads, we have to alternate between the 10 threads,
   - p->tf->eip = (uint)start_routine;
   - p->tf->esp = top of newly allocated ustack (reference next step).
   
-  ![image](uploads/467f5cabb058d5c2fd5c487c010ec8a9/image.png)  
+  ![image](uploads/thread/img3.png)  
 
 - Find empty page in main thread's address space
   Starting from the main thread's ustack, we start searching page by page until we find one that is not present (*pte & PTE_P is 0). Once we find an empty page, we set the new thread's ustack to the address of this empty page.  
